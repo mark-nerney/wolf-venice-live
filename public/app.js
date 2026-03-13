@@ -339,24 +339,86 @@ async function handleUserSpeech(transcript) {
     const data = await response.json();
 
     if (data.choices && data.choices[0]) {
-      const wolfReply = data.choices[0].message.content;
+      let wolfReply = data.choices[0].message.content;
 
       if (!wolfReply || !wolfReply.trim()) {
-        // Empty response — try reasoning_content
         const reasoning = data.choices[0].message.reasoning_content;
         if (reasoning) {
-          addTranscript('wolf', reasoning);
-          state.voiceChatHistory.push({ role: 'assistant', content: reasoning });
-          await speakText(reasoning);
+          wolfReply = reasoning;
         } else {
           addTranscript('wolf', '*silence* ...something went wrong');
           showToast('Got empty response from Venice', 'error');
+          state.isProcessing = false;
+          if (state.isVoiceActive) setTimeout(() => startListening(), 800);
+          return;
         }
-      } else {
-        addTranscript('wolf', wolfReply);
-        state.voiceChatHistory.push({ role: 'assistant', content: wolfReply });
-        await speakText(wolfReply);
       }
+
+      // Check for inline image generation tags
+      const imageMatch = wolfReply.match(/\[GENERATE_IMAGE:\s*(.+?)\]/i);
+      const videoMatch = wolfReply.match(/\[GENERATE_VIDEO:\s*(.+?)\]/i);
+
+      // Strip tags from spoken text
+      const spokenText = wolfReply
+        .replace(/\[GENERATE_IMAGE:\s*.+?\]/gi, '')
+        .replace(/\[GENERATE_VIDEO:\s*.+?\]/gi, '')
+        .trim();
+
+      // Display and speak the text part
+      if (spokenText) {
+        addTranscript('wolf', spokenText);
+        state.voiceChatHistory.push({ role: 'assistant', content: wolfReply });
+        await speakText(spokenText);
+      }
+
+      // Generate image inline if requested
+      if (imageMatch) {
+        const imagePrompt = imageMatch[1].trim();
+        addTranscript('system', `🎨 Generating image: "${imagePrompt}"...`);
+        try {
+          const imgResponse = await fetch('/api/image/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: imagePrompt })
+          });
+          const imgData = await imgResponse.json();
+          if (imgData.data && imgData.data[0]) {
+            const src = imgData.data[0].b64_json 
+              ? 'data:image/png;base64,' + imgData.data[0].b64_json 
+              : imgData.data[0].url;
+            addTranscriptImage(src, imagePrompt);
+            showToast('🎨 Image generated!', 'success');
+          }
+        } catch (imgErr) {
+          addTranscript('system', `❌ Image generation failed: ${imgErr.message}`);
+        }
+      }
+
+      // Generate video inline if requested
+      if (videoMatch) {
+        const videoPrompt = videoMatch[1].trim();
+        addTranscript('system', `🎬 Generating video: "${videoPrompt}"...`);
+        try {
+          const vidResponse = await fetch('/api/video/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: videoPrompt })
+          });
+          const vidData = await vidResponse.json();
+          if (vidData.data || vidData.url || vidData.video_url) {
+            const videoUrl = vidData.video_url || vidData.url || (vidData.data && vidData.data[0]?.url);
+            if (videoUrl) {
+              addTranscriptVideo(videoUrl, videoPrompt);
+            } else {
+              addTranscript('system', '🎬 Video generation queued — check back shortly');
+            }
+            showToast('🎬 Video generated!', 'success');
+          }
+        } catch (vidErr) {
+          addTranscript('system', `❌ Video generation failed: ${vidErr.message}`);
+        }
+      }
+
     } else if (data.error) {
       throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
     }
@@ -369,7 +431,6 @@ async function handleUserSpeech(transcript) {
   // Resume listening ONLY after speaking is fully done
   state.isProcessing = false;
   if (state.isVoiceActive && !state.isSpeaking) {
-    // Extra delay to let audio fully stop before activating mic
     setTimeout(() => startListening(), 800);
   }
 }
@@ -461,6 +522,20 @@ function clearInterimTranscript() {
 function setupEventListeners() {
   // Mic button
   els.micButton.addEventListener('click', toggleVoice);
+
+  // Voice chat file upload
+  const voiceUploadBtn = document.getElementById('voiceUploadBtn');
+  const voiceFileInput = document.getElementById('voiceFileUpload');
+  if (voiceUploadBtn && voiceFileInput) {
+    voiceUploadBtn.addEventListener('click', () => voiceFileInput.click());
+    voiceFileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        handleVoiceChatFileUpload(file);
+        voiceFileInput.value = ''; // Reset for re-upload
+      }
+    });
+  }
 
   // Tab switching
   $$('.tab-btn').forEach(btn => {
@@ -738,14 +813,130 @@ function setStatus(type, text) {
 function addTranscript(role, text) {
   if (!els.transcriptArea) return;
 
+  const labels = {
+    wolf: '🐺 Wolf',
+    user: '🎤 You',
+    system: '⚡ System'
+  };
+
   const msg = document.createElement('div');
   msg.className = `transcript-message ${role}`;
   msg.innerHTML = `
-    <div class="msg-label">${role === 'wolf' ? '🐺 Wolf' : '🎤 You'}</div>
+    <div class="msg-label">${labels[role] || role}</div>
     <div class="msg-text">${escapeHtml(text)}</div>
   `;
   els.transcriptArea.appendChild(msg);
   els.transcriptArea.scrollTop = els.transcriptArea.scrollHeight;
+}
+
+function addTranscriptImage(src, caption) {
+  if (!els.transcriptArea) return;
+
+  const msg = document.createElement('div');
+  msg.className = 'transcript-message wolf media';
+  msg.innerHTML = `
+    <div class="msg-label">🐺 Wolf</div>
+    <div class="msg-media">
+      <img src="${src}" alt="${escapeHtml(caption)}" 
+           style="max-width:100%;border-radius:12px;margin:8px 0;cursor:pointer"
+           onclick="window.open(this.src,'_blank')" />
+      <div class="msg-text" style="opacity:0.6;font-size:0.85em;margin-top:4px">📸 ${escapeHtml(caption)}</div>
+    </div>
+  `;
+  els.transcriptArea.appendChild(msg);
+  els.transcriptArea.scrollTop = els.transcriptArea.scrollHeight;
+}
+
+function addTranscriptVideo(src, caption) {
+  if (!els.transcriptArea) return;
+
+  const msg = document.createElement('div');
+  msg.className = 'transcript-message wolf media';
+  msg.innerHTML = `
+    <div class="msg-label">🐺 Wolf</div>
+    <div class="msg-media">
+      <video src="${src}" controls autoplay muted
+             style="max-width:100%;border-radius:12px;margin:8px 0"></video>
+      <div class="msg-text" style="opacity:0.6;font-size:0.85em;margin-top:4px">🎬 ${escapeHtml(caption)}</div>
+    </div>
+  `;
+  els.transcriptArea.appendChild(msg);
+  els.transcriptArea.scrollTop = els.transcriptArea.scrollHeight;
+}
+
+/**
+ * Handle file upload in voice chat — sends image to vision, text to memories
+ */
+async function handleVoiceChatFileUpload(file) {
+  if (file.type.startsWith('image/')) {
+    // Image upload — analyze with vision and show inline
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const base64 = e.target.result.split(',')[1];
+      
+      // Show uploaded image inline
+      addTranscriptImage(e.target.result, file.name);
+      addTranscript('user', `*uploads image: ${file.name}*`);
+      
+      // Stop listening during processing
+      state.isProcessing = true;
+      stopListening();
+      setStatus('loading', 'Wolf is looking at your image...');
+
+      try {
+        const response = await fetch('/api/vision/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image_base64: base64,
+            question: 'Describe this image in a natural, conversational way as Wolf would. Be vivid and react genuinely. Keep it short for voice.'
+          })
+        });
+
+        const data = await response.json();
+        if (data.choices && data.choices[0]) {
+          const reply = data.choices[0].message.content;
+          addTranscript('wolf', reply);
+          state.voiceChatHistory.push(
+            { role: 'user', content: `[Mark sent an image: ${file.name}]` },
+            { role: 'assistant', content: reply }
+          );
+          await speakText(reply);
+        }
+      } catch (err) {
+        addTranscript('wolf', `*squints* Couldn't process that image: ${err.message}`);
+      }
+
+      state.isProcessing = false;
+      if (state.isVoiceActive && !state.isSpeaking) {
+        setTimeout(() => startListening(), 800);
+      }
+    };
+    reader.readAsDataURL(file);
+
+  } else if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+    // Text file — add to memories
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const content = e.target.result;
+      addTranscript('system', `📄 Uploaded document: ${file.name} (${(file.size / 1024).toFixed(1)}KB)`);
+      
+      try {
+        await fetch('/api/memories', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ memory: `[Document: ${file.name}]\n${content}` })
+        });
+        addTranscript('system', `✅ "${file.name}" saved to Wolf's memory`);
+        showToast(`📄 Document added to Wolf's memory`, 'success');
+      } catch (err) {
+        addTranscript('system', `❌ Failed to save document: ${err.message}`);
+      }
+    };
+    reader.readAsText(file);
+  } else {
+    showToast('Supported formats: images (png, jpg) and text files (.txt)', 'error');
+  }
 }
 
 function showToast(message, type = 'info') {

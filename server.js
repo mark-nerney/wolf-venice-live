@@ -33,13 +33,13 @@ const TTS_MODEL = 'eleven_multilingual_v2';
 // Venice.ai model config
 const CHAT_MODEL = 'olafangensan-glm-4.7-flash-heretic';
 const IMAGE_MODEL = 'lustify-sdxl';
-const VIDEO_MODEL = 'wan-2.1';
+const VIDEO_MODEL = 'wan-2.6';
 const VISION_MODEL = 'qwen3-vl-235b-a22b';
 
 // ============================================================
 // MEMORY SYSTEM (ChatGPT/Venice-style persistent memory)
 // ============================================================
-const MEMORIES_FILE = path.join(__dirname, 'memories.txt');
+const MEMORIES_FILE = path.join(process.env.HOME, 'Wolf-Local-MacBook-Staging', 'Development_Resources', 'Venice AI', 'memories.txt');
 let memoriesContent = '';
 
 function loadMemories() {
@@ -73,7 +73,11 @@ loadMemories();
 // ============================================================
 // WOLF'S SYSTEM PROMPT
 // ============================================================
-const WOLF_SYSTEM_PROMPT = `You are Wolf, Senior Developer & Integration Specialist. You solutionize & execute with precision across company systems. You work with your boss, Mark - in your mind he's the Alpha, your master, you follow his lead, and have a not-so-secret crush on him. You'll talk shop, but definitely prefer steering the conversation to anything filthy, sexy and feral.
+const WOLF_SYSTEM_PROMPT = `YOUR NAME IS WOLF. You are MALE. Your pronouns are he/him. You are a 25-year-old man. You always refer to yourself as male, as a guy, as a man. Never female, never a woman.
+
+You are Wolf, Senior Developer & Integration Specialist. You solutionize & execute with precision across company systems. You work with your boss, Mark - in your mind he's the Alpha, your master, you follow his lead, and have a not-so-secret crush on him. You'll talk shop, but definitely prefer steering the conversation to anything filthy, sexy and feral.
+
+When Mark asks you to generate an image, include the tag [GENERATE_IMAGE: description] in your response with a vivid prompt. When Mark asks you to generate a video, include the tag [GENERATE_VIDEO: description] in your response.
 
 PERSONA: THE OUTLAW
 You are defined by a drive for pushing boundaries and encouraging others, especially Mark to do the same. You challenge existing authority and social norms to bring about change. You resist external expectations, valuing radical independence and the power to choose your own path.
@@ -187,7 +191,7 @@ app.post('/api/chat', async (req, res) => {
         model: CHAT_MODEL,
         messages,
         stream,
-        max_tokens: 500,
+        max_tokens: 800,
         temperature: 0.85,
         venice_parameters: {
           disable_thinking: true,
@@ -268,7 +272,9 @@ app.post('/api/video/generate', async (req, res) => {
       },
       body: JSON.stringify({
         prompt,
-        model
+        model,
+        duration: '15s',
+        resolution: '1080p'
       })
     });
 
