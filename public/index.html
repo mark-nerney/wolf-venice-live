@@ -98,6 +98,47 @@
           </button>
           <span class="mic-label" id="micLabel">Click to talk</span>
         </div>
+
+        <!-- Antigravity Wolf Input (typed messages spoken with Adam voice) -->
+        <div class="antigravity-input-area" style="
+          display: flex;
+          gap: 8px;
+          padding: 10px 16px;
+          border-top: 1px solid rgba(138, 43, 226, 0.2);
+          background: rgba(138, 43, 226, 0.04);
+          width: 100%;
+        ">
+          <div style="display:flex;align-items:center;gap:6px;color:#a855f7;font-size:11px;font-weight:700;letter-spacing:0.5px;white-space:nowrap;">
+            🐺 AG
+          </div>
+          <input type="text" id="antigravityInput" placeholder="Antigravity Wolf speaks here..." style="
+            flex: 1;
+            padding: 8px 12px;
+            background: rgba(138, 43, 226, 0.08);
+            border: 1px solid rgba(138, 43, 226, 0.2);
+            border-radius: 8px;
+            color: #f0f0f5;
+            font-family: var(--font-primary);
+            font-size: 13px;
+            outline: none;
+          " />
+          <button id="antigravitySendBtn" title="Speak as Antigravity Wolf" style="
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            border: 1px solid #a855f7;
+            background: rgba(138, 43, 226, 0.15);
+            color: #a855f7;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          ">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+            </svg>
+          </button>
+        </div>
       </section>
 
       <!-- Right Panel: Multimodal -->

@@ -27,7 +27,8 @@ const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const VENICE_BASE_URL = 'https://api.venice.ai/api/v1';
 
 // ElevenLabs voice config
-const WOLF_VOICE_ID = 'Rsz5u2Huh1hPlPr0oxRQ'; // Josh - Slow and Calm
+const WOLF_VOICE_ID = 'Rsz5u2Huh1hPlPr0oxRQ';       // Josh - Slow and Calm (Venice Wolf)
+const ANTIGRAVITY_VOICE_ID = 'pNInz6obpgDQGcFmaJgB';  // Adam - Dominant, Firm (Antigravity Wolf)
 const TTS_MODEL = 'eleven_multilingual_v2';
 
 // Venice.ai model config

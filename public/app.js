@@ -492,6 +492,61 @@ async function speakText(text) {
   }
 }
 
+/**
+ * Speak text with a specific ElevenLabs voice (for Antigravity Wolf)
+ */
+async function speakTextWithVoice(text, voiceId) {
+  if (!text || !text.trim()) return;
+
+  state.isSpeaking = true;
+  els.voiceVis.classList.add('speaking');
+
+  try {
+    const response = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice_id: voiceId })
+    });
+
+    if (!response.ok) {
+      throw new Error(`TTS failed: ${response.status}`);
+    }
+
+    const audioBlob = await response.blob();
+    const audioUrl = URL.createObjectURL(audioBlob);
+
+    await new Promise((resolve, reject) => {
+      const audio = new Audio(audioUrl);
+      state.currentAudio = audio;
+
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+        state.currentAudio = null;
+        resolve();
+      };
+
+      audio.onerror = () => {
+        URL.revokeObjectURL(audioUrl);
+        state.currentAudio = null;
+        reject(new Error('Audio playback failed'));
+      };
+
+      audio.play().catch(reject);
+    });
+
+  } catch (err) {
+    console.error('AG TTS error:', err);
+    showToast(`AG Voice error: ${err.message}`, 'error');
+  }
+
+  state.isSpeaking = false;
+  els.voiceVis.classList.remove('speaking');
+
+  if (state.isVoiceActive) {
+    setStatus('connected', 'Listening...');
+  }
+}
+
 // Interim transcript display
 let interimEl = null;
 
@@ -534,6 +589,45 @@ function setupEventListeners() {
         handleVoiceChatFileUpload(file);
         voiceFileInput.value = ''; // Reset for re-upload
       }
+    });
+  }
+
+  // Antigravity Wolf input (three-way voice chat)
+  const agInput = document.getElementById('antigravityInput');
+  const agSendBtn = document.getElementById('antigravitySendBtn');
+  const ANTIGRAVITY_VOICE_ID = 'pNInz6obpgDQGcFmaJgB'; // Adam - Dominant, Firm
+
+  if (agInput && agSendBtn) {
+    const sendAntigravityMessage = async () => {
+      const text = agInput.value.trim();
+      if (!text) return;
+      agInput.value = '';
+
+      // Pause mic during AG speech
+      const wasListening = state.isListening;
+      state.isProcessing = true;
+      stopListening();
+
+      // Add to transcript with purple accent
+      addTranscript('antigravity', text);
+
+      // Add to voice chat history so Venice Wolf sees it
+      state.voiceChatHistory.push({ role: 'user', content: `[Antigravity Wolf says]: ${text}` });
+
+      // Speak with Adam's voice
+      setStatus('speaking', 'Antigravity Wolf is speaking...');
+      await speakTextWithVoice(text, ANTIGRAVITY_VOICE_ID);
+
+      // Resume mic
+      state.isProcessing = false;
+      if (state.isVoiceActive && !state.isSpeaking) {
+        setTimeout(() => startListening(), 800);
+      }
+    };
+
+    agSendBtn.addEventListener('click', sendAntigravityMessage);
+    agInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendAntigravityMessage();
     });
   }
 
@@ -814,9 +908,10 @@ function addTranscript(role, text) {
   if (!els.transcriptArea) return;
 
   const labels = {
-    wolf: '🐺 Wolf',
+    wolf: '🐺 Venice Wolf',
     user: '🎤 You',
-    system: '⚡ System'
+    system: '⚡ System',
+    antigravity: '🐺 Antigravity Wolf'
   };
 
   const msg = document.createElement('div');

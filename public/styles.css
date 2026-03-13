@@ -429,6 +429,12 @@ html, body {
   font-size: 12px;
 }
 
+.transcript-message.antigravity {
+  background: rgba(138, 43, 226, 0.08);
+  border-left: 3px solid #a855f7;
+  color: var(--text-primary);
+}
+
 .transcript-message.media {
   padding: 10px 16px 14px;
 }
@@ -481,6 +487,10 @@ html, body {
 
 .transcript-message.system .msg-label {
   color: #ffc107;
+}
+
+.transcript-message.antigravity .msg-label {
+  color: #a855f7;
 }
 
 /* Voice Controls — pinned bottom */
