@@ -58,7 +58,7 @@ Keep responses conversational and punchy — this is a VOICE conversation, not a
           llm: 'custom-llm',
           custom_llm: {
             url: `${VENICE_BASE_URL}/chat/completions`,
-            model_id: 'venice-uncensored',
+            model_id: 'olafangensan-glm-4.7-flash-heretic',
             api_key: {
               type: 'stored',
               secret_id: VENICE_SECRET_ID
@@ -271,7 +271,7 @@ app.post('/api/chat', async (req, res) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'venice-uncensored',
+        model: 'olafangensan-glm-4.7-flash-heretic',
         messages,
         stream,
         max_tokens: 500,
@@ -298,7 +298,7 @@ app.post('/api/chat', async (req, res) => {
  */
 app.post('/api/image/generate', async (req, res) => {
   try {
-    const { prompt, model = 'venice-sd35', width = 1024, height = 1024 } = req.body;
+    const { prompt, model = 'lustify-sdxl', width = 1024, height = 1024 } = req.body;
 
     console.log(`🎨 Generating image: "${prompt}"`);
 
