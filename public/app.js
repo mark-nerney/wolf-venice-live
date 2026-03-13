@@ -837,10 +837,8 @@ function addTranscriptImage(src, caption) {
   msg.innerHTML = `
     <div class="msg-label">🐺 Wolf</div>
     <div class="msg-media">
-      <img src="${src}" alt="${escapeHtml(caption)}" 
-           style="max-width:100%;border-radius:12px;margin:8px 0;cursor:pointer"
-           onclick="window.open(this.src,'_blank')" />
-      <div class="msg-text" style="opacity:0.6;font-size:0.85em;margin-top:4px">📸 ${escapeHtml(caption)}</div>
+      <img src="${src}" alt="${escapeHtml(caption)}" onclick="window.open(this.src,'_blank')" />
+      <div class="msg-caption">📸 ${escapeHtml(caption)}</div>
     </div>
   `;
   els.transcriptArea.appendChild(msg);
@@ -855,9 +853,8 @@ function addTranscriptVideo(src, caption) {
   msg.innerHTML = `
     <div class="msg-label">🐺 Wolf</div>
     <div class="msg-media">
-      <video src="${src}" controls autoplay muted
-             style="max-width:100%;border-radius:12px;margin:8px 0"></video>
-      <div class="msg-text" style="opacity:0.6;font-size:0.85em;margin-top:4px">🎬 ${escapeHtml(caption)}</div>
+      <video src="${src}" controls autoplay muted></video>
+      <div class="msg-caption">🎬 ${escapeHtml(caption)}</div>
     </div>
   `;
   els.transcriptArea.appendChild(msg);

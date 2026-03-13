@@ -225,6 +225,7 @@ html, body {
   border-radius: var(--radius-lg);
   padding: 24px;
   overflow: hidden;
+  min-width: 0;
 }
 
 /* Voice Visualizer */
@@ -357,6 +358,7 @@ html, body {
   padding: 16px 0;
   scrollbar-width: thin;
   scrollbar-color: var(--wolf-surface-3) transparent;
+  min-height: 0;
 }
 
 .transcript-area::-webkit-scrollbar {
@@ -410,6 +412,50 @@ html, body {
   color: var(--text-secondary);
 }
 
+.transcript-message.system {
+  background: rgba(255, 200, 0, 0.06);
+  border-left: 3px solid #ffc107;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.transcript-message.media {
+  padding: 10px 16px 14px;
+}
+
+.transcript-message .msg-media img {
+  max-width: 100%;
+  max-height: 400px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  margin: 8px 0;
+  cursor: pointer;
+  border: 1px solid var(--wolf-border-subtle);
+  transition: transform 0.2s ease;
+}
+
+.transcript-message .msg-media img:hover {
+  transform: scale(1.02);
+  box-shadow: var(--glow-red);
+}
+
+.transcript-message .msg-media video {
+  max-width: 100%;
+  max-height: 400px;
+  border-radius: var(--radius-md);
+  margin: 8px 0;
+  border: 1px solid var(--wolf-border-subtle);
+}
+
+.transcript-message .msg-caption {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  opacity: 0.7;
+}
+
 .transcript-message .msg-label {
   font-size: 10px;
   font-weight: 700;
@@ -421,6 +467,10 @@ html, body {
 
 .transcript-message.user .msg-label {
   color: var(--text-muted);
+}
+
+.transcript-message.system .msg-label {
+  color: #ffc107;
 }
 
 /* Voice Controls */
