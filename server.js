@@ -71,7 +71,21 @@ Keep responses conversational and punchy — this is a VOICE conversation, not a
         language: 'en'
       },
       tts: {
-        voice_id: 'TX3LPaxmHKxFdv7VOQHJ' // Liam - deep, confident male voice
+        voice_id: 'SOYHLrjzK2X1ezoPC6cr' // Harry - Fierce Warrior (young, fierce male)
+      },
+      conversation: {
+        max_duration_seconds: 600,
+        client_events: [
+          'agent_response',
+          'agent_response_correction',
+          'user_transcript',
+          'interruption',
+          'ping'
+        ]
+      },
+      turn: {
+        turn_timeout: 20,
+        mode: 'turn'
       }
     },
     platform_settings: {
