@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wolf Voice Chat — Powered by Venice.ai + ElevenLabs</title>
+  <meta name="description" content="Talk to Wolf — an unfiltered, magnetic AI powered by Venice.ai with real-time voice via ElevenLabs.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Ambient Background -->
+  <div class="ambient-bg">
+    <div class="gradient-orb orb-1"></div>
+    <div class="gradient-orb orb-2"></div>
+    <div class="gradient-orb orb-3"></div>
+  </div>
+
+  <!-- Main App -->
+  <div id="app">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="wolf-icon">🐺</div>
+        <div class="header-text">
+          <h1>Wolf</h1>
+          <span class="header-subtitle">Venice.ai × ElevenLabs</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="status-indicator" id="statusIndicator">
+          <span class="status-dot"></span>
+          <span class="status-text">Initializing...</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Left Panel: Conversation -->
+      <section class="conversation-panel">
+        <!-- Voice Visualizer -->
+        <div class="voice-visualizer" id="voiceVisualizer">
+          <div class="visualizer-ring ring-outer"></div>
+          <div class="visualizer-ring ring-middle"></div>
+          <div class="visualizer-ring ring-inner"></div>
+          <div class="wolf-avatar" id="wolfAvatar">
+            <span class="avatar-emoji">🐺</span>
+          </div>
+          <div class="audio-bars" id="audioBars">
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          </div>
+        </div>
+
+        <!-- Conversation transcript -->
+        <div class="transcript-area" id="transcriptArea">
+          <div class="transcript-placeholder" id="transcriptPlaceholder">
+            <p>Press the mic to start talking to Wolf</p>
+            <p class="sub">Voice powered by ElevenLabs • Brain by Venice.ai</p>
+          </div>
+        </div>
+
+        <!-- Voice Controls -->
+        <div class="voice-controls">
+          <button class="mic-button" id="micButton" title="Start Conversation">
+            <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+            <svg class="stop-icon hidden" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="2"/>
+            </svg>
+            <div class="mic-pulse"></div>
+          </button>
+          <span class="mic-label" id="micLabel">Click to talk</span>
+        </div>
+      </section>
+
+      <!-- Right Panel: Multimodal -->
+      <section class="multimodal-panel">
+        <!-- Tab Navigation -->
+        <div class="panel-tabs">
+          <button class="tab-btn active" data-tab="images" id="tabImages">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            Images
+          </button>
+          <button class="tab-btn" data-tab="chat" id="tabChat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21 15-3.086-3.086A2 2 0 0 0 16.5 11.5H12l-4 4H3v-9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v9z"/><path d="M7 11V7"/><path d="M12 11V9"/></svg>
+            Text Chat
+          </button>
+          <button class="tab-btn" data-tab="vision" id="tabVision">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            Vision
+          </button>
+        </div>
+
+        <!-- Images Tab -->
+        <div class="tab-content active" id="contentImages">
+          <div class="image-gen-form">
+            <div class="input-group">
+              <input type="text" id="imagePrompt" placeholder="Describe what you want to see..." class="gen-input" />
+              <button class="gen-button" id="generateBtn" title="Generate Image">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </button>
+            </div>
+            <div class="model-select">
+              <select id="imageModel">
+                <option value="venice-sd35">Venice SD3.5 (Default)</option>
+                <option value="hidream">HiDream (Fast)</option>
+                <option value="qwen-image">Qwen Image (Quality)</option>
+                <option value="nano-banana-pro">Nano Banana Pro</option>
+              </select>
+            </div>
+          </div>
+          <div class="image-gallery" id="imageGallery">
+            <div class="gallery-empty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="gallery-icon"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+              <p>Generated images will appear here</p>
+              <p class="sub">Type a prompt or ask Wolf to generate something</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Text Chat Tab -->
+        <div class="tab-content" id="contentChat">
+          <div class="chat-messages" id="chatMessages"></div>
+          <div class="chat-input-area">
+            <input type="text" id="chatInput" placeholder="Type a message to Wolf..." class="chat-input" />
+            <button class="send-button" id="sendBtn">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Vision Tab -->
+        <div class="tab-content" id="contentVision">
+          <div class="vision-upload-area" id="visionUpload">
+            <input type="file" id="visionFile" accept="image/*" class="hidden" />
+            <div class="upload-zone" id="uploadZone">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="upload-icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <p>Drop an image or click to upload</p>
+              <p class="sub">Wolf will analyze it using Venice.ai Vision</p>
+            </div>
+          </div>
+          <div class="vision-preview hidden" id="visionPreview">
+            <img id="visionImage" src="" alt="Uploaded image" />
+            <div class="vision-question">
+              <input type="text" id="visionQuestion" placeholder="Ask Wolf about this image..." value="What do you see? Be vivid and detailed." />
+              <button class="analyze-button" id="analyzeBtn">Analyze</button>
+            </div>
+          </div>
+          <div class="vision-result hidden" id="visionResult">
+            <h3>Wolf's Analysis</h3>
+            <p id="visionResultText"></p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <span>Wolf Voice Chat v1.0</span>
+      <span class="footer-divider">•</span>
+      <span>Venice.ai (Uncensored)</span>
+      <span class="footer-divider">•</span>
+      <span>ElevenLabs Conversational AI</span>
+    </footer>
+  </div>
+
+  <!-- Toast Notifications -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

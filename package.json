@@ -1,0 +1,20 @@
+{
+  "name": "wolf-voice-chat",
+  "version": "1.0.0",
+  "description": "Wolf Voice Chat — ElevenLabs Conversational AI + Venice.ai Multimodal",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["wolf", "voice-chat", "elevenlabs", "venice-ai", "multimodal"],
+  "author": "Wolf Pack",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "node-fetch": "^2.7.0"
+  }
+}

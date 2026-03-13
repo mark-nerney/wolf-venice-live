@@ -1,0 +1,15 @@
+{
+  "name": "wolf-venice-live-functions",
+  "description": "Cloud Functions for Wolf Voice Chat API",
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^6.3.0",
+    "express": "^4.21.2",
+    "cors": "^2.8.5",
+    "node-fetch": "^2.7.0"
+  }
+}
