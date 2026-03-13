@@ -253,6 +253,16 @@ function resetConversation() {
   state.isConnected = false;
   state.conversation = null;
   state.isSpeaking = false;
+  state.isAgentSpeaking = false;
+
+  // Clear audio queue
+  audioPlayQueue = [];
+  isPlayingQueue = false;
+  nextPlayTime = 0;
+  if (state.audioEndTimer) {
+    clearTimeout(state.audioEndTimer);
+    state.audioEndTimer = null;
+  }
 
   setStatus('connected', 'Wolf is ready');
   els.micButton.classList.remove('active');
@@ -355,7 +365,9 @@ function handleWSMessage(data) {
         break;
 
       case 'interruption':
-        audioQueue = [];
+        audioPlayQueue = [];
+        isPlayingQueue = false;
+        nextPlayTime = 0;
         state.isAgentSpeaking = false;
         if (state.audioEndTimer) clearTimeout(state.audioEndTimer);
         els.voiceVis.classList.remove('speaking');
@@ -382,53 +394,107 @@ function handleWSMessage(data) {
   }
 }
 
-// Audio playback
+// ============================================================
+// AUDIO PLAYBACK — μ-law decoding + sequential queue
+// ============================================================
 let playbackContext = null;
+let audioPlayQueue = [];
+let isPlayingQueue = false;
+let nextPlayTime = 0;
+
+// μ-law to linear PCM lookup table (ITU-T G.711)
+const MULAW_DECODE_TABLE = new Int16Array(256);
+(function buildMulawTable() {
+  for (let i = 0; i < 256; i++) {
+    let mu = ~i & 0xFF;
+    let sign = (mu & 0x80) ? -1 : 1;
+    let exponent = (mu >> 4) & 0x07;
+    let mantissa = mu & 0x0F;
+    let sample = (mantissa << (exponent + 3)) + (1 << (exponent + 3)) - 132;
+    if (sample > 32767) sample = 32767;
+    if (sample < -32767) sample = -32767;
+    MULAW_DECODE_TABLE[i] = sign * sample;
+  }
+})();
+
+function decodeMulaw(mulawBytes) {
+  const pcm = new Float32Array(mulawBytes.length);
+  for (let i = 0; i < mulawBytes.length; i++) {
+    pcm[i] = MULAW_DECODE_TABLE[mulawBytes[i]] / 32768.0;
+  }
+  return pcm;
+}
 
 function scheduleListeningState() {
-  // Debounced: only switch to "Listening" once no more audio chunks arrive
   if (state.audioEndTimer) clearTimeout(state.audioEndTimer);
   state.audioEndTimer = setTimeout(() => {
-    state.isAgentSpeaking = false;
-    els.voiceVis.classList.remove('speaking');
-    if (state.isConnected) {
-      setStatus('connected', 'Listening...');
+    if (audioPlayQueue.length === 0 && !isPlayingQueue) {
+      state.isAgentSpeaking = false;
+      els.voiceVis.classList.remove('speaking');
+      if (state.isConnected) {
+        setStatus('connected', 'Listening...');
+      }
     }
-  }, 800); // Wait 800ms after last audio chunk ends
+  }, 1000);
 }
 
 async function playAudioChunk(base64Audio) {
-  try {
-    if (!playbackContext) {
-      playbackContext = new AudioContext();
-    }
+  // Queue the chunk and process
+  audioPlayQueue.push(base64Audio);
+  if (!isPlayingQueue) {
+    processAudioQueue();
+  }
+}
 
-    const audioBytes = base64ToArrayBuffer(base64Audio);
-    // Try to decode as various formats
-    try {
-      const audioBuffer = await playbackContext.decodeAudioData(audioBytes.slice(0));
-      const source = playbackContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(playbackContext.destination);
-      source.onended = scheduleListeningState;
-      source.start();
-    } catch (decodeErr) {
-      // PCM data - play directly
-      const pcmData = new Int16Array(audioBytes);
-      const float32 = new Float32Array(pcmData.length);
-      for (let i = 0; i < pcmData.length; i++) {
-        float32[i] = pcmData[i] / 32768;
-      }
-      const audioBuffer = playbackContext.createBuffer(1, float32.length, 16000);
-      audioBuffer.getChannelData(0).set(float32);
-      const source = playbackContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(playbackContext.destination);
-      source.onended = scheduleListeningState;
-      source.start();
-    }
+async function processAudioQueue() {
+  if (audioPlayQueue.length === 0) {
+    isPlayingQueue = false;
+    scheduleListeningState();
+    return;
+  }
+
+  isPlayingQueue = true;
+
+  if (!playbackContext) {
+    playbackContext = new AudioContext({ sampleRate: 8000 });
+  }
+
+  // Ensure context is running (Chrome autoplay policy)
+  if (playbackContext.state === 'suspended') {
+    await playbackContext.resume();
+  }
+
+  const base64Audio = audioPlayQueue.shift();
+  const audioBytes = new Uint8Array(base64ToArrayBuffer(base64Audio));
+
+  try {
+    // Decode μ-law to linear PCM float32
+    const pcmFloat = decodeMulaw(audioBytes);
+
+    // Create audio buffer at 8kHz (μ-law standard rate)
+    const audioBuffer = playbackContext.createBuffer(1, pcmFloat.length, 8000);
+    audioBuffer.getChannelData(0).set(pcmFloat);
+
+    const source = playbackContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(playbackContext.destination);
+
+    // Schedule this chunk right after the previous one ends
+    const currentTime = playbackContext.currentTime;
+    const startTime = Math.max(currentTime, nextPlayTime);
+    source.start(startTime);
+
+    // Calculate when this chunk will finish
+    nextPlayTime = startTime + audioBuffer.duration;
+
+    source.onended = () => {
+      // Process next chunk in queue
+      processAudioQueue();
+    };
   } catch (err) {
     console.error('Audio playback error:', err);
+    // Try next chunk even if this one fails
+    processAudioQueue();
   }
 }
 
