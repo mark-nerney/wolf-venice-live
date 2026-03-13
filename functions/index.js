@@ -288,6 +288,58 @@ app.post('/api/vision/analyze', async (req, res) => {
   }
 });
 
+// Voice config
+const WOLF_VOICE_ID = 'Rsz5u2Huh1hPlPr0oxRQ';       // Josh (Venice Wolf)
+const ANTIGRAVITY_VOICE_ID = 'Z2fsAwk7IblvPhYzfslC';  // Davis (Antigravity Wolf)
+const TTS_MODEL = 'eleven_multilingual_v2';
+
+app.post('/api/tts', async (req, res) => {
+  const { elevenlabsKey } = getConfig();
+  try {
+    const { text, voice_id = WOLF_VOICE_ID } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'No text provided' });
+    }
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voice_id}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'xi-api-key': elevenlabsKey
+        },
+        body: JSON.stringify({
+          text,
+          model_id: TTS_MODEL,
+          voice_settings: {
+            stability: 0.4,
+            similarity_boost: 0.8,
+            style: 0.3,
+            use_speaker_boost: true
+          }
+        })
+      }
+    );
+    if (!response.ok) {
+      const errText = await response.text();
+      return res.status(response.status).json({ error: errText });
+    }
+    const audioBuffer = await response.buffer();
+    res.set('Content-Type', 'audio/mpeg');
+    res.send(audioBuffer);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/config', (req, res) => {
+  res.json({
+    voice_prompt: "You are Wolf — a bold, edgy, provocative, magnetic AI persona.",
+    greeting: "Hey... *leans back, flexing a little* Finally connected. Been thinking about you. What are we getting into tonight?",
+    has_memories: false
+  });
+});
+
 app.get('/api/health', (req, res) => {
   const { veniceKey, elevenlabsKey } = getConfig();
   res.json({
@@ -295,7 +347,8 @@ app.get('/api/health', (req, res) => {
     persona: 'Wolf 🐺',
     agent_id: agentId,
     venice: !!veniceKey,
-    elevenlabs: !!elevenlabsKey
+    elevenlabs: !!elevenlabsKey,
+    voices: { venice: WOLF_VOICE_ID, antigravity: ANTIGRAVITY_VOICE_ID }
   });
 });
 
