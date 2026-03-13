@@ -17,6 +17,7 @@ const state = {
   isVoiceActive: false,
   isListening: false,
   isSpeaking: false,
+  isProcessing: false,  // Lock to prevent mic during think+speak cycle
   voiceChatHistory: [],
   chatHistory: [],
   imageBase64: null,
@@ -183,24 +184,30 @@ function initSpeechRecognition() {
     console.error('Speech recognition error:', event.error);
 
     if (event.error === 'no-speech') {
-      // No speech detected — restart listening if still active
-      if (state.isVoiceActive) {
+      // No speech detected — only restart if not speaking
+      if (state.isVoiceActive && !state.isSpeaking) {
         setTimeout(() => startListening(), 500);
       }
     } else if (event.error === 'aborted') {
-      // Intentionally stopped
+      // Intentionally stopped — do nothing
     } else {
       showToast(`Speech recognition error: ${event.error}`, 'error');
     }
   };
 
   recognition.onend = () => {
-    console.log('🎤 Recognition ended');
+    console.log('🎤 Recognition ended, isSpeaking:', state.isSpeaking);
     state.isListening = false;
 
-    // Auto-restart if voice is still active and we're not speaking
-    if (state.isVoiceActive && !state.isSpeaking) {
-      setTimeout(() => startListening(), 300);
+    // CRITICAL: Do NOT auto-restart if Wolf is speaking or about to speak
+    // The speakText function will explicitly call startListening when done
+    if (state.isVoiceActive && !state.isSpeaking && !state.isProcessing) {
+      setTimeout(() => {
+        // Double-check state hasn't changed during timeout
+        if (state.isVoiceActive && !state.isSpeaking && !state.isProcessing) {
+          startListening();
+        }
+      }, 500);
     }
   };
 
@@ -208,7 +215,11 @@ function initSpeechRecognition() {
 }
 
 function startListening() {
-  if (!state.recognition || !state.isVoiceActive || state.isSpeaking) return;
+  // STRICT GUARD: Never listen while Wolf is speaking or processing
+  if (!state.recognition || !state.isVoiceActive || state.isSpeaking || state.isProcessing) {
+    console.log('⏸️ Not starting listener — speaking:', state.isSpeaking, 'processing:', state.isProcessing);
+    return;
+  }
 
   try {
     state.recognition.start();
@@ -272,6 +283,7 @@ async function startVoice() {
 function stopVoice() {
   state.isVoiceActive = false;
   state.isSpeaking = false;
+  state.isProcessing = false;
 
   // Stop any playing audio
   if (state.currentAudio) {
@@ -298,7 +310,8 @@ async function handleUserSpeech(transcript) {
   console.log('🗣️ User said:', transcript);
   addTranscript('user', transcript);
 
-  // Stop listening while we process
+  // LOCK: Stop listening and prevent auto-restart
+  state.isProcessing = true;
   stopListening();
   setStatus('loading', 'Wolf is thinking...');
 
@@ -353,9 +366,11 @@ async function handleUserSpeech(transcript) {
     showToast(`Chat error: ${err.message}`, 'error');
   }
 
-  // Resume listening after speaking
+  // Resume listening ONLY after speaking is fully done
+  state.isProcessing = false;
   if (state.isVoiceActive && !state.isSpeaking) {
-    startListening();
+    // Extra delay to let audio fully stop before activating mic
+    setTimeout(() => startListening(), 800);
   }
 }
 
