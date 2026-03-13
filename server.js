@@ -58,7 +58,7 @@ Keep responses conversational and punchy — this is a VOICE conversation, not a
           llm: 'custom-llm',
           custom_llm: {
             url: `${VENICE_BASE_URL}/chat/completions`,
-            model_id: 'olafangensan-glm-4.7-flash-heretic',
+            model_id: 'venice-uncensored',  // Use venice-uncensored for voice (no thinking mode)
             api_key: {
               type: 'stored',
               secret_id: VENICE_SECRET_ID
@@ -275,7 +275,10 @@ app.post('/api/chat', async (req, res) => {
         messages,
         stream,
         max_tokens: 500,
-        temperature: 0.85
+        temperature: 0.85,
+        venice_parameters: {
+          disable_thinking: true
+        }
       })
     });
 
