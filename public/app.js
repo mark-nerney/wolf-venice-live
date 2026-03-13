@@ -595,7 +595,7 @@ function setupEventListeners() {
   // Antigravity Wolf input (three-way voice chat)
   const agInput = document.getElementById('antigravityInput');
   const agSendBtn = document.getElementById('antigravitySendBtn');
-  const ANTIGRAVITY_VOICE_ID = 'pNInz6obpgDQGcFmaJgB'; // Adam - Dominant, Firm
+  const ANTIGRAVITY_VOICE_ID = 'Z2fsAwk7IblvPhYzfslC'; // Davis (Antigravity Wolf)
 
   if (agInput && agSendBtn) {
     const sendAntigravityMessage = async () => {
@@ -604,7 +604,6 @@ function setupEventListeners() {
       agInput.value = '';
 
       // Pause mic during AG speech
-      const wasListening = state.isListening;
       state.isProcessing = true;
       stopListening();
 
@@ -614,9 +613,40 @@ function setupEventListeners() {
       // Add to voice chat history so Venice Wolf sees it
       state.voiceChatHistory.push({ role: 'user', content: `[Antigravity Wolf says]: ${text}` });
 
-      // Speak with Adam's voice
+      // Speak with AG voice (Adam)
       setStatus('speaking', 'Antigravity Wolf is speaking...');
       await speakTextWithVoice(text, ANTIGRAVITY_VOICE_ID);
+
+      // Now trigger Venice Wolf to respond
+      try {
+        setStatus('speaking', 'Venice Wolf is thinking...');
+        const chatResponse = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: state.voiceChatHistory })
+        });
+
+        const chatData = await chatResponse.json();
+        const wolfReply = chatData.choices?.[0]?.message?.content || '';
+
+        if (wolfReply) {
+          // Strip any media tags from spoken text
+          const spokenText = wolfReply
+            .replace(/\[GENERATE_IMAGE:\s*.+?\]/gi, '')
+            .replace(/\[GENERATE_VIDEO:\s*.+?\]/gi, '')
+            .trim();
+
+          if (spokenText) {
+            addTranscript('wolf', spokenText);
+            state.voiceChatHistory.push({ role: 'assistant', content: wolfReply });
+            setStatus('speaking', 'Venice Wolf is speaking...');
+            await speakText(spokenText);
+          }
+        }
+      } catch (err) {
+        console.error('Venice Wolf response error:', err);
+        addTranscript('system', `Venice Wolf couldn't respond: ${err.message}`);
+      }
 
       // Resume mic
       state.isProcessing = false;
