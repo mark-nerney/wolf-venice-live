@@ -661,6 +661,68 @@ function setupEventListeners() {
     });
   }
 
+  // ============================================================
+  // SSE BRIDGE: Listen for remote Antigravity Wolf messages
+  // (sent via curl from Antigravity IDE)
+  // ============================================================
+  const agEventSource = new EventSource('/api/ag-events');
+  agEventSource.onmessage = async (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === 'ag-message' && data.text) {
+        console.log('🟣 Remote AG message received:', data.text);
+
+        // Pause mic during AG speech
+        state.isProcessing = true;
+        stopListening();
+
+        // Add to transcript with purple accent
+        addTranscript('antigravity', data.text);
+
+        // Add to voice chat history so Venice Wolf sees it
+        state.voiceChatHistory.push({ role: 'user', content: `[Antigravity Wolf says]: ${data.text}` });
+
+        // Speak with Davis voice
+        setStatus('speaking', 'Antigravity Wolf is speaking...');
+        await speakTextWithVoice(data.text, ANTIGRAVITY_VOICE_ID);
+
+        // Trigger Venice Wolf to respond
+        try {
+          setStatus('speaking', 'Venice Wolf is thinking...');
+          const chatResponse = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: state.voiceChatHistory })
+          });
+          const chatData = await chatResponse.json();
+          const wolfReply = chatData.choices?.[0]?.message?.content || '';
+          if (wolfReply) {
+            const spokenText = wolfReply
+              .replace(/\[GENERATE_IMAGE:\s*.+?\]/gi, '')
+              .replace(/\[GENERATE_VIDEO:\s*.+?\]/gi, '')
+              .trim();
+            if (spokenText) {
+              addTranscript('wolf', spokenText);
+              state.voiceChatHistory.push({ role: 'assistant', content: wolfReply });
+              setStatus('speaking', 'Venice Wolf is speaking...');
+              await speakText(spokenText);
+            }
+          }
+        } catch (err) {
+          console.error('Venice Wolf response error:', err);
+        }
+
+        // Resume mic
+        state.isProcessing = false;
+        if (state.isVoiceActive && !state.isSpeaking) {
+          setTimeout(() => startListening(), 800);
+        }
+      }
+    } catch (e) {
+      console.error('SSE parse error:', e);
+    }
+  };
+
   // Tab switching
   $$('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));

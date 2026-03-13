@@ -125,6 +125,44 @@ ${memoriesContent}
 // API ROUTES
 // ============================================================
 
+// ============================================================
+// ANTIGRAVITY WOLF SSE BRIDGE
+// Allows Antigravity Wolf (CLI/curl) to inject messages into 
+// Mark's browser via Server-Sent Events
+// ============================================================
+let sseClients = [];
+
+// SSE stream — Mark's browser connects here
+app.get('/api/ag-events', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  });
+  res.write('data: {"type":"connected"}\n\n');
+  sseClients.push(res);
+  req.on('close', () => {
+    sseClients = sseClients.filter(c => c !== res);
+  });
+});
+
+// POST endpoint — Antigravity Wolf sends messages here via curl
+app.post('/api/ag-message', (req, res) => {
+  const { text } = req.body;
+  if (!text || !text.trim()) {
+    return res.status(400).json({ error: 'No text provided' });
+  }
+  console.log(`🟣 AG Wolf: "${text.substring(0, 60)}..."`);
+  
+  // Broadcast to all connected browsers
+  const event = JSON.stringify({ type: 'ag-message', text: text.trim() });
+  sseClients.forEach(client => {
+    client.write(`data: ${event}\n\n`);
+  });
+  
+  res.json({ ok: true, clients: sseClients.length });
+});
+
 /**
  * ElevenLabs Text-to-Speech
  */
