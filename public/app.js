@@ -6,6 +6,8 @@
  * Custom UI for image generation, text chat, and vision via Venice.ai
  */
 
+import { Conversation } from 'https://cdn.jsdelivr.net/npm/@11labs/client@latest/+esm';
+
 // ============================================================
 // STATE
 // ============================================================
@@ -195,7 +197,7 @@ async function startConversation() {
 
     // Use the ElevenLabs SDK's Conversation.startSession
     // This handles ALL audio capture, encoding, decoding, and playback
-    const conversation = await window.ElevenLabsConversation.startSession({
+    const conversation = await Conversation.startSession({
       signedUrl: signedUrlData.signed_url,
       onConnect: () => {
         console.log('🐺 Connected to ElevenLabs via SDK');
