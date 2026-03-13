@@ -1,22 +1,28 @@
 /**
  * Wolf Voice Chat — Frontend Application
- * ElevenLabs Conversational AI SDK + Venice.ai Multimodal
  * 
- * Uses the official @11labs/client SDK for voice (handles all audio complexity)
- * Custom UI for image generation, text chat, and vision via Venice.ai
+ * Voice Architecture:
+ *   User speaks → Web Speech API (browser STT) → text transcript
+ *   → Venice.ai chat (GLM 4.7 Flash Heretic) → text response
+ *   → ElevenLabs TTS (Harry - Fierce Warrior) → audio playback
+ *   → listen again → continuous conversation loop
+ * 
+ * Also: Image gen, text chat, vision via Venice.ai
  */
-
-import { Conversation } from 'https://cdn.jsdelivr.net/npm/@11labs/client@latest/+esm';
 
 // ============================================================
 // STATE
 // ============================================================
 const state = {
-  agentId: null,
-  conversation: null,
-  isConnected: false,
+  isVoiceActive: false,
+  isListening: false,
+  isSpeaking: false,
+  voiceChatHistory: [],
   chatHistory: [],
-  imageBase64: null
+  imageBase64: null,
+  recognition: null,
+  currentAudio: null,
+  wolfConfig: null
 };
 
 // ============================================================
@@ -87,32 +93,350 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Setup event listeners
   setupEventListeners();
 
-  // Initialize agent
-  await initAgent();
+  // Initialize speech recognition
+  initSpeechRecognition();
+
+  // Get Wolf config
+  await initWolf();
 });
 
 // ============================================================
-// AGENT INITIALIZATION
+// WOLF INITIALIZATION
 // ============================================================
-async function initAgent() {
+async function initWolf() {
   setStatus('loading', 'Connecting to Wolf...');
 
   try {
-    const response = await fetch('/api/agent');
-    const data = await response.json();
+    const response = await fetch('/api/config');
+    state.wolfConfig = await response.json();
 
-    if (data.error) {
-      throw new Error(data.error);
+    // Check health
+    const health = await fetch('/api/health');
+    const healthData = await health.json();
+
+    if (healthData.venice && healthData.elevenlabs) {
+      setStatus('connected', 'Wolf is ready');
+      showToast('🐺 Wolf is online — voice + text + images!', 'success');
+    } else {
+      setStatus('error', 'Missing API keys');
+      showToast('API keys not configured', 'error');
+    }
+  } catch (err) {
+    console.error('Wolf init failed:', err);
+    setStatus('error', 'Connection failed');
+    showToast('Failed to connect to Wolf server.', 'error');
+  }
+}
+
+// ============================================================
+// SPEECH RECOGNITION (Web Speech API — Browser STT)
+// ============================================================
+function initSpeechRecognition() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (!SpeechRecognition) {
+    console.warn('Web Speech API not supported');
+    showToast('Speech recognition not supported in this browser. Use Chrome.', 'error');
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    console.log('🎤 Listening...');
+    state.isListening = true;
+    setStatus('connected', 'Listening...');
+    els.voiceVis.classList.add('active');
+    els.voiceVis.classList.remove('speaking');
+  };
+
+  recognition.onresult = (event) => {
+    let finalTranscript = '';
+    let interimTranscript = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        finalTranscript += transcript;
+      } else {
+        interimTranscript += transcript;
+      }
     }
 
-    state.agentId = data.agent_id;
-    setStatus('connected', 'Wolf is ready');
-    showToast('🐺 Wolf is online and ready to howl!', 'success');
-    console.log('Agent ID:', state.agentId);
+    // Show interim results
+    if (interimTranscript) {
+      updateInterimTranscript(interimTranscript);
+    }
+
+    // Process final result
+    if (finalTranscript.trim()) {
+      clearInterimTranscript();
+      handleUserSpeech(finalTranscript.trim());
+    }
+  };
+
+  recognition.onerror = (event) => {
+    console.error('Speech recognition error:', event.error);
+
+    if (event.error === 'no-speech') {
+      // No speech detected — restart listening if still active
+      if (state.isVoiceActive) {
+        setTimeout(() => startListening(), 500);
+      }
+    } else if (event.error === 'aborted') {
+      // Intentionally stopped
+    } else {
+      showToast(`Speech recognition error: ${event.error}`, 'error');
+    }
+  };
+
+  recognition.onend = () => {
+    console.log('🎤 Recognition ended');
+    state.isListening = false;
+
+    // Auto-restart if voice is still active and we're not speaking
+    if (state.isVoiceActive && !state.isSpeaking) {
+      setTimeout(() => startListening(), 300);
+    }
+  };
+
+  state.recognition = recognition;
+}
+
+function startListening() {
+  if (!state.recognition || !state.isVoiceActive || state.isSpeaking) return;
+
+  try {
+    state.recognition.start();
+  } catch (e) {
+    // Already started, ignore
+    console.log('Recognition already active');
+  }
+}
+
+function stopListening() {
+  if (state.recognition) {
+    try {
+      state.recognition.stop();
+    } catch (e) {
+      // Not running, ignore
+    }
+  }
+  state.isListening = false;
+}
+
+// ============================================================
+// VOICE CONVERSATION FLOW
+// ============================================================
+async function toggleVoice() {
+  if (state.isVoiceActive) {
+    stopVoice();
+  } else {
+    await startVoice();
+  }
+}
+
+async function startVoice() {
+  state.isVoiceActive = true;
+  state.voiceChatHistory = [];
+
+  // Update UI
+  els.micButton.classList.add('active');
+  els.micIcon.classList.add('hidden');
+  els.stopIcon.classList.remove('hidden');
+  els.micLabel.textContent = 'Click to stop';
+  els.voiceVis.classList.add('active');
+  els.transcriptPlaceholder?.remove();
+
+  showToast('🎤 Voice activated! Wolf is greeting you...', 'success');
+
+  // Wolf's greeting
+  const greeting = state.wolfConfig?.greeting || 
+    "Yo! What's up? It's Wolf. Wide awake, slightly feral, ready for chaos. What are we getting into?";
+
+  addTranscript('wolf', greeting);
+
+  // Speak the greeting via ElevenLabs TTS
+  await speakText(greeting);
+
+  // Now start listening for user's response
+  if (state.isVoiceActive) {
+    startListening();
+  }
+}
+
+function stopVoice() {
+  state.isVoiceActive = false;
+  state.isSpeaking = false;
+
+  // Stop any playing audio
+  if (state.currentAudio) {
+    state.currentAudio.pause();
+    state.currentAudio = null;
+  }
+
+  // Stop listening
+  stopListening();
+
+  // Reset UI
+  els.micButton.classList.remove('active');
+  els.micIcon.classList.remove('hidden');
+  els.stopIcon.classList.add('hidden');
+  els.micLabel.textContent = 'Click to talk';
+  els.voiceVis.classList.remove('active', 'speaking');
+  setStatus('connected', 'Wolf is ready');
+}
+
+/**
+ * Handle what the user said — send to Venice, get response, speak it
+ */
+async function handleUserSpeech(transcript) {
+  console.log('🗣️ User said:', transcript);
+  addTranscript('user', transcript);
+
+  // Stop listening while we process
+  stopListening();
+  setStatus('loading', 'Wolf is thinking...');
+
+  // Add to voice chat history
+  state.voiceChatHistory.push({ role: 'user', content: transcript });
+
+  // Build messages with system prompt
+  const messages = [
+    {
+      role: 'system',
+      content: state.wolfConfig?.voice_prompt || 
+        'You are Wolf — bold, edgy, unfiltered. Keep responses SHORT for voice chat. Max 2-3 sentences.'
+    },
+    ...state.voiceChatHistory.slice(-20)
+  ];
+
+  try {
+    // Send to Venice.ai chat
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages, stream: false })
+    });
+
+    const data = await response.json();
+
+    if (data.choices && data.choices[0]) {
+      const wolfReply = data.choices[0].message.content;
+
+      if (!wolfReply || !wolfReply.trim()) {
+        // Empty response — try reasoning_content
+        const reasoning = data.choices[0].message.reasoning_content;
+        if (reasoning) {
+          addTranscript('wolf', reasoning);
+          state.voiceChatHistory.push({ role: 'assistant', content: reasoning });
+          await speakText(reasoning);
+        } else {
+          addTranscript('wolf', '*silence* ...something went wrong');
+          showToast('Got empty response from Venice', 'error');
+        }
+      } else {
+        addTranscript('wolf', wolfReply);
+        state.voiceChatHistory.push({ role: 'assistant', content: wolfReply });
+        await speakText(wolfReply);
+      }
+    } else if (data.error) {
+      throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+    }
   } catch (err) {
-    console.error('Agent init failed:', err);
-    setStatus('error', 'Connection failed');
-    showToast('Failed to connect to Wolf. Check the server.', 'error');
+    console.error('Voice chat error:', err);
+    addTranscript('wolf', `*growls* Something broke: ${err.message}`);
+    showToast(`Chat error: ${err.message}`, 'error');
+  }
+
+  // Resume listening after speaking
+  if (state.isVoiceActive && !state.isSpeaking) {
+    startListening();
+  }
+}
+
+/**
+ * Send text to ElevenLabs TTS and play the audio
+ */
+async function speakText(text) {
+  if (!text || !text.trim()) return;
+
+  state.isSpeaking = true;
+  setStatus('speaking', 'Wolf is speaking...');
+  els.voiceVis.classList.add('speaking');
+
+  try {
+    const response = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+
+    if (!response.ok) {
+      throw new Error(`TTS failed: ${response.status}`);
+    }
+
+    // Get audio blob and play it
+    const audioBlob = await response.blob();
+    const audioUrl = URL.createObjectURL(audioBlob);
+
+    await new Promise((resolve, reject) => {
+      const audio = new Audio(audioUrl);
+      state.currentAudio = audio;
+
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+        state.currentAudio = null;
+        resolve();
+      };
+
+      audio.onerror = (e) => {
+        URL.revokeObjectURL(audioUrl);
+        state.currentAudio = null;
+        reject(new Error('Audio playback failed'));
+      };
+
+      audio.play().catch(reject);
+    });
+
+  } catch (err) {
+    console.error('TTS error:', err);
+    showToast(`Voice error: ${err.message}`, 'error');
+  }
+
+  state.isSpeaking = false;
+  els.voiceVis.classList.remove('speaking');
+
+  if (state.isVoiceActive) {
+    setStatus('connected', 'Listening...');
+  }
+}
+
+// Interim transcript display
+let interimEl = null;
+
+function updateInterimTranscript(text) {
+  if (!interimEl) {
+    interimEl = document.createElement('div');
+    interimEl.className = 'transcript-message user interim';
+    interimEl.innerHTML = `
+      <div class="msg-label">🎤 You</div>
+      <div class="msg-text" style="opacity:0.5;font-style:italic"></div>
+    `;
+    els.transcriptArea?.appendChild(interimEl);
+  }
+  interimEl.querySelector('.msg-text').textContent = text;
+  els.transcriptArea.scrollTop = els.transcriptArea.scrollHeight;
+}
+
+function clearInterimTranscript() {
+  if (interimEl) {
+    interimEl.remove();
+    interimEl = null;
   }
 }
 
@@ -121,7 +445,7 @@ async function initAgent() {
 // ============================================================
 function setupEventListeners() {
   // Mic button
-  els.micButton.addEventListener('click', toggleConversation);
+  els.micButton.addEventListener('click', toggleVoice);
 
   // Tab switching
   $$('.tab-btn').forEach(btn => {
@@ -164,115 +488,6 @@ function setupEventListeners() {
 }
 
 // ============================================================
-// VOICE CONVERSATION — Using @11labs/client SDK
-// ============================================================
-async function toggleConversation() {
-  if (state.isConnected) {
-    await stopConversation();
-  } else {
-    await startConversation();
-  }
-}
-
-async function startConversation() {
-  if (!state.agentId) {
-    showToast('Wolf agent not ready. Please wait...', 'error');
-    return;
-  }
-
-  setStatus('loading', 'Connecting...');
-  els.micLabel.textContent = 'Connecting...';
-
-  try {
-    // Request mic permission first (must be from user gesture)
-    await navigator.mediaDevices.getUserMedia({ audio: true });
-
-    // Get signed URL for secure connection
-    const signedUrlRes = await fetch('/api/signed-url');
-    const signedUrlData = await signedUrlRes.json();
-
-    if (signedUrlData.error) {
-      throw new Error(signedUrlData.error);
-    }
-
-    // Use the ElevenLabs SDK's Conversation.startSession
-    // This handles ALL audio capture, encoding, decoding, and playback
-    const conversation = await Conversation.startSession({
-      signedUrl: signedUrlData.signed_url,
-      onConnect: () => {
-        console.log('🐺 Connected to ElevenLabs via SDK');
-        state.isConnected = true;
-        setStatus('connected', 'Connected — speak!');
-        els.micButton.classList.add('active');
-        els.micIcon.classList.add('hidden');
-        els.stopIcon.classList.remove('hidden');
-        els.micLabel.textContent = 'Click to stop';
-        els.voiceVis.classList.add('active');
-        els.transcriptPlaceholder?.remove();
-        showToast('🎤 Microphone active — start talking!', 'success');
-      },
-      onDisconnect: () => {
-        console.log('🐺 Disconnected from ElevenLabs');
-        resetConversation();
-      },
-      onError: (error) => {
-        console.error('ElevenLabs SDK error:', error);
-        showToast(`Voice error: ${error.message || error}`, 'error');
-        resetConversation();
-      },
-      onModeChange: (mode) => {
-        console.log('Mode changed:', mode.mode);
-        if (mode.mode === 'speaking') {
-          els.voiceVis.classList.add('speaking');
-          setStatus('speaking', 'Wolf is speaking...');
-        } else {
-          els.voiceVis.classList.remove('speaking');
-          if (state.isConnected) {
-            setStatus('connected', 'Listening...');
-          }
-        }
-      },
-      onMessage: (message) => {
-        console.log('SDK message:', message);
-        // Handle transcript messages
-        if (message.type === 'agent_response' && message.agent_response_event?.agent_response) {
-          addTranscript('wolf', message.agent_response_event.agent_response);
-        } else if (message.type === 'user_transcript' && message.user_transcription_event?.user_transcript) {
-          addTranscript('user', message.user_transcription_event.user_transcript);
-        }
-      }
-    });
-
-    state.conversation = conversation;
-
-  } catch (err) {
-    console.error('Start conversation error:', err);
-    showToast(`Connection failed: ${err.message}`, 'error');
-    resetConversation();
-  }
-}
-
-async function stopConversation() {
-  if (state.conversation) {
-    await state.conversation.endSession();
-    state.conversation = null;
-  }
-  resetConversation();
-}
-
-function resetConversation() {
-  state.isConnected = false;
-  state.conversation = null;
-
-  setStatus('connected', 'Wolf is ready');
-  els.micButton.classList.remove('active');
-  els.micIcon.classList.remove('hidden');
-  els.stopIcon.classList.add('hidden');
-  els.micLabel.textContent = 'Click to talk';
-  els.voiceVis.classList.remove('active', 'speaking');
-}
-
-// ============================================================
 // IMAGE GENERATION (Venice.ai)
 // ============================================================
 async function generateImage() {
@@ -311,7 +526,6 @@ async function generateImage() {
       throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
     }
 
-    // Display the image
     loadingEl.remove();
 
     if (data.data && data.data[0]) {
@@ -325,7 +539,6 @@ async function generateImage() {
         <div class="gallery-caption">${prompt}</div>
       `;
       gallery.prepend(item);
-
       showToast('🎨 Image generated!', 'success');
     } else if (data.images && data.images[0]) {
       const item = document.createElement('div');
@@ -391,8 +604,19 @@ async function sendChatMessage() {
 
     if (data.choices && data.choices[0]) {
       const reply = data.choices[0].message.content;
-      addChatMessage('wolf', reply);
-      state.chatHistory.push({ role: 'assistant', content: reply });
+      if (reply && reply.trim()) {
+        addChatMessage('wolf', reply);
+        state.chatHistory.push({ role: 'assistant', content: reply });
+      } else {
+        // Fallback to reasoning_content
+        const reasoning = data.choices[0].message.reasoning_content;
+        if (reasoning) {
+          addChatMessage('wolf', reasoning);
+          state.chatHistory.push({ role: 'assistant', content: reasoning });
+        } else {
+          addChatMessage('wolf', '*stares* Got nothing back. Try again.');
+        }
+      }
     } else if (data.error) {
       throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
     }

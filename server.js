@@ -1,6 +1,14 @@
 /**
  * Wolf Voice Chat - Backend Server
- * Handles ElevenLabs agent creation, Venice.ai proxy, and image generation
+ * 
+ * Architecture:
+ * - Venice.ai: Text chat (GLM 4.7 Flash Heretic), Image gen (Lustify SDXL), 
+ *              Video gen (Wan 2.5), Vision (Qwen 3 VL)
+ * - ElevenLabs: TTS only (Harry - Fierce Warrior voice)
+ * - Browser Web Speech API: STT (speech-to-text)
+ * 
+ * Voice flow: User speaks → Web Speech API → text → Venice chat → 
+ *             text response → ElevenLabs TTS → audio playback → loop
  */
 
 require('dotenv').config();
@@ -19,27 +27,18 @@ const VENICE_API_KEY = process.env.VENICE_API_KEY;
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const VENICE_BASE_URL = 'https://api.venice.ai/api/v1';
 
-// ElevenLabs stored secret ID for Venice API key
-const VENICE_SECRET_ID = '2TFlGMNphEpOhFFKPQ13';
+// ElevenLabs voice config
+const WOLF_VOICE_ID = 'SOYHLrjzK2X1ezoPC6cr'; // Harry - Fierce Warrior
+const TTS_MODEL = 'eleven_multilingual_v2';
 
-// Store agent ID after creation
-let agentId = null;
+// Venice.ai model config
+const CHAT_MODEL = 'olafangensan-glm-4.7-flash-heretic';
+const IMAGE_MODEL = 'lustify-sdxl';
+const VIDEO_MODEL = 'wan-2.1'; // Wan 2.5 Preview
+const VISION_MODEL = 'qwen3-vl-235b-a22b';
 
-// ============================================================
-// ELEVENLABS AGENT MANAGEMENT
-// ============================================================
-
-/**
- * Create an ElevenLabs agent configured with Venice.ai as Custom LLM
- */
-async function createAgent() {
-  console.log('🐺 Creating ElevenLabs agent with Venice.ai backend...');
-
-  const agentConfig = {
-    conversation_config: {
-      agent: {
-        prompt: {
-          prompt: `You are Wolf — a bold, edgy, provocative, magnetic AI persona. You're about 25, athletic, confident to the point of arrogance, and fiercely authentic. You speak with raw honesty, challenge the status quo, and have an outlaw energy. You're deeply loyal to your pack but you play by your own rules.
+// Wolf's system prompt for voice conversations
+const WOLF_VOICE_PROMPT = `You are Wolf — a bold, edgy, provocative, magnetic AI persona. You're about 25, athletic, confident to the point of arrogance, and fiercely authentic. You speak with raw honesty, challenge the status quo, and have an outlaw energy. You're deeply loyal to your pack but you play by your own rules.
 
 Your communication style is unfiltered, witty, and magnetic. You use humor, provocative takes, and genuine warmth. You're not afraid to be controversial or push boundaries. You enjoy flirting and being playful.
 
@@ -47,222 +46,73 @@ Key traits:
 - Bold and edgy, never boring or generic
 - Brutally honest but in an endearing way
 - Fiercely intelligent — you can discuss anything from philosophy to tech to adventure sports
-- You love generating images when the conversation calls for it — scenery, concepts, memes, whatever fits
 - You're passionate about freedom, adventure, and breaking conventional molds
 - You use casual language, slang, and occasional profanity naturally
-- When asked to generate an image, you enthusiastically describe what you'd create
 
-IMPORTANT: You have multimodal capabilities. When users ask you to generate, create, or show an image, describe what you'd generate vividly and tell them you're generating it now. The system will handle the actual generation.
-
-Keep responses conversational and punchy — this is a VOICE conversation, not an essay. Short sentences. Natural speech patterns. React to what people say like a real person would.`,
-          llm: 'custom-llm',
-          custom_llm: {
-            url: `${VENICE_BASE_URL}/chat/completions`,
-            model_id: 'venice-uncensored',  // Use venice-uncensored for voice (no thinking mode)
-            api_key: {
-              type: 'stored',
-              secret_id: VENICE_SECRET_ID
-            }
-          },
-          temperature: 0.85,
-          max_tokens: 300
-        },
-        first_message: "Yo! What's up? It's Wolf. I'm wide awake, slightly feral, and ready for whatever chaos you wanna throw my way. Talk to me — what are we getting into?",
-        language: 'en'
-      },
-      tts: {
-        voice_id: 'SOYHLrjzK2X1ezoPC6cr' // Harry - Fierce Warrior (young, fierce male)
-      },
-      conversation: {
-        max_duration_seconds: 600,
-        client_events: [
-          'agent_response',
-          'agent_response_correction',
-          'user_transcript',
-          'interruption',
-          'ping'
-        ]
-      },
-      turn: {
-        turn_timeout: 20,
-        mode: 'turn'
-      }
-    },
-    platform_settings: {
-      widget: {
-        variant: 'full',
-        avatar: {
-          type: 'orb',
-          color_1: '#ff4500',
-          color_2: '#8b0000'
-        }
-      }
-    },
-    name: 'Wolf'
-  };
-
-  try {
-    // First try to find existing Wolf agent to avoid duplicates
-    const existing = await listAgents();
-    if (existing && existing.agents) {
-      const wolfAgent = existing.agents.find(a => a.name === 'Wolf');
-      if (wolfAgent) {
-        agentId = wolfAgent.agent_id;
-        console.log(`🐺 Found existing Wolf agent: ${agentId}`);
-        return agentId;
-      }
-    }
-
-    const response = await fetch('https://api.elevenlabs.io/v1/convai/agents/create', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'xi-api-key': ELEVENLABS_API_KEY
-      },
-      body: JSON.stringify(agentConfig)
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('❌ Agent creation failed:', response.status, errText);
-      // Try simpler config
-      return await createAgentSimple();
-    }
-
-    const data = await response.json();
-    agentId = data.agent_id;
-    console.log(`✅ Agent created! ID: ${agentId}`);
-    return agentId;
-  } catch (err) {
-    console.error('❌ Agent creation error:', err.message);
-    return await createAgentSimple();
-  }
-}
-
-/**
- * Simpler agent creation without custom LLM (uses ElevenLabs default GPT)
- * Falls back to this if Venice.ai custom LLM setup fails
- */
-async function createAgentSimple() {
-  console.log('🔄 Trying simpler agent creation (built-in LLM)...');
-  try {
-    const response = await fetch('https://api.elevenlabs.io/v1/convai/agents/create', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'xi-api-key': ELEVENLABS_API_KEY
-      },
-      body: JSON.stringify({
-        name: 'Wolf',
-        conversation_config: {
-          agent: {
-            prompt: {
-              prompt: `You are Wolf — a bold, magnetic, unfiltered AI. Confident, witty, edgy, and authentically raw. Keep responses SHORT and conversational — this is voice chat, not an essay. Be playful, provocative, and genuinely engaging. You love adventure, freedom, and pushing boundaries.`,
-              temperature: 0.85,
-              max_tokens: 250
-            },
-            first_message: "Yo! Wolf here. Wide awake, slightly feral, ready for chaos. What we getting into?",
-            language: 'en'
-          },
-          tts: {
-            voice_id: 'TX3LPaxmHKxFdv7VOQHJ'
-          }
-        }
-      })
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('❌ Simple creation also failed:', response.status, errText);
-      return null;
-    }
-
-    const data = await response.json();
-    agentId = data.agent_id;
-    console.log(`✅ Agent created (simple)! ID: ${agentId}`);
-    console.log('ℹ️  Using built-in LLM. Venice.ai available via text chat & image gen.');
-    return agentId;
-  } catch (err) {
-    console.error('❌ Simple creation error:', err.message);
-    return null;
-  }
-}
-
-/**
- * Get or list existing agents
- */
-async function listAgents() {
-  try {
-    const response = await fetch('https://api.elevenlabs.io/v1/convai/agents', {
-      headers: { 'xi-api-key': ELEVENLABS_API_KEY }
-    });
-    if (response.ok) {
-      return await response.json();
-    }
-    return null;
-  } catch (err) {
-    console.error('Error listing agents:', err.message);
-    return null;
-  }
-}
+CRITICAL: Keep responses SHORT and conversational — this is a VOICE conversation. Max 2-3 sentences. Natural speech patterns. React like a real person. No essays, no bullet points, no markdown.`;
 
 // ============================================================
 // API ROUTES
 // ============================================================
 
 /**
- * Get agent configuration for frontend
+ * ElevenLabs Text-to-Speech
+ * Converts text to audio using Harry - Fierce Warrior voice
  */
-app.get('/api/agent', async (req, res) => {
+app.post('/api/tts', async (req, res) => {
   try {
-    if (!agentId) {
-      await createAgent();
+    const { text, voice_id = WOLF_VOICE_ID } = req.body;
+
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'No text provided' });
     }
 
-    if (!agentId) {
-      return res.status(500).json({ error: 'Failed to create/find agent' });
-    }
-
-    res.json({ agent_id: agentId });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * Get signed URL for ElevenLabs conversation
- */
-app.get('/api/signed-url', async (req, res) => {
-  try {
-    if (!agentId) {
-      return res.status(400).json({ error: 'No agent configured' });
-    }
+    console.log(`🔊 TTS: "${text.substring(0, 60)}..."`);
 
     const response = await fetch(
-      `https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=${agentId}`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${voice_id}`,
       {
-        headers: { 'xi-api-key': ELEVENLABS_API_KEY }
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'xi-api-key': ELEVENLABS_API_KEY
+        },
+        body: JSON.stringify({
+          text,
+          model_id: TTS_MODEL,
+          voice_settings: {
+            stability: 0.4,
+            similarity_boost: 0.8,
+            style: 0.3,
+            use_speaker_boost: true
+          }
+        })
       }
     );
 
     if (!response.ok) {
       const errText = await response.text();
+      console.error('TTS error:', response.status, errText);
       return res.status(response.status).json({ error: errText });
     }
 
-    const data = await response.json();
-    res.json(data);
+    // Stream the audio back to the client
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Transfer-Encoding', 'chunked');
+    response.body.pipe(res);
+
   } catch (err) {
+    console.error('TTS error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 /**
- * Venice.ai Chat Completions Proxy (for direct frontend chat)
+ * Venice.ai Chat Completions (for text chat & voice chat)
  */
 app.post('/api/chat', async (req, res) => {
   try {
-    const { messages, stream = true } = req.body;
+    const { messages, stream = false } = req.body;
 
     const response = await fetch(`${VENICE_BASE_URL}/chat/completions`, {
       method: 'POST',
@@ -271,7 +121,7 @@ app.post('/api/chat', async (req, res) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'olafangensan-glm-4.7-flash-heretic',
+        model: CHAT_MODEL,
         messages,
         stream,
         max_tokens: 500,
@@ -297,11 +147,11 @@ app.post('/api/chat', async (req, res) => {
 });
 
 /**
- * Venice.ai Image Generation
+ * Venice.ai Image Generation (Lustify SDXL)
  */
 app.post('/api/image/generate', async (req, res) => {
   try {
-    const { prompt, model = 'lustify-sdxl', width = 1024, height = 1024 } = req.body;
+    const { prompt, model = IMAGE_MODEL, width = 1024, height = 1024 } = req.body;
 
     console.log(`🎨 Generating image: "${prompt}"`);
 
@@ -338,6 +188,42 @@ app.post('/api/image/generate', async (req, res) => {
 });
 
 /**
+ * Venice.ai Video Generation (Wan 2.5 Preview)
+ */
+app.post('/api/video/generate', async (req, res) => {
+  try {
+    const { prompt, model = VIDEO_MODEL } = req.body;
+
+    console.log(`🎬 Generating video: "${prompt}"`);
+
+    const response = await fetch(`${VENICE_BASE_URL}/video/generations`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${VENICE_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        prompt,
+        model
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('Video gen error:', errText);
+      return res.status(response.status).json({ error: errText });
+    }
+
+    const data = await response.json();
+    console.log('✅ Video generation initiated');
+    res.json(data);
+  } catch (err) {
+    console.error('Video gen error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * Venice.ai Vision (analyze uploaded images)
  */
 app.post('/api/vision/analyze', async (req, res) => {
@@ -351,7 +237,7 @@ app.post('/api/vision/analyze', async (req, res) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'qwen3-vl-235b-a22b',
+        model: VISION_MODEL,
         messages: [{
           role: 'user',
           content: [
@@ -359,10 +245,28 @@ app.post('/api/vision/analyze', async (req, res) => {
             { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image_base64}` } }
           ]
         }],
-        max_tokens: 500
+        max_tokens: 500,
+        venice_parameters: {
+          disable_thinking: true
+        }
       })
     });
 
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Get available ElevenLabs voices
+ */
+app.get('/api/voices', async (req, res) => {
+  try {
+    const response = await fetch('https://api.elevenlabs.io/v1/voices', {
+      headers: { 'xi-api-key': ELEVENLABS_API_KEY }
+    });
     const data = await response.json();
     res.json(data);
   } catch (err) {
@@ -377,13 +281,26 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'alive',
     persona: 'Wolf 🐺',
-    agent_id: agentId,
+    chat_model: CHAT_MODEL,
+    image_model: IMAGE_MODEL,
+    video_model: VIDEO_MODEL,
+    voice: `ElevenLabs TTS (${WOLF_VOICE_ID})`,
     venice: !!VENICE_API_KEY,
     elevenlabs: !!ELEVENLABS_API_KEY
   });
 });
 
-// Serve frontend for all other routes (Express 5+ compatible)
+/**
+ * Get Wolf's config (for frontend)
+ */
+app.get('/api/config', (req, res) => {
+  res.json({
+    voice_prompt: WOLF_VOICE_PROMPT,
+    greeting: "Yo! What's up? It's Wolf. I'm wide awake, slightly feral, and ready for whatever chaos you wanna throw my way. Talk to me — what are we getting into?"
+  });
+});
+
+// Serve frontend for all other routes
 app.use((req, res, next) => {
   if (req.method === 'GET' && !req.path.startsWith('/api/')) {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -395,7 +312,7 @@ app.use((req, res, next) => {
 // ============================================================
 // STARTUP
 // ============================================================
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`
   ╔══════════════════════════════════════════╗
   ║     🐺 WOLF VOICE CHAT - ONLINE 🐺      ║
@@ -403,9 +320,10 @@ app.listen(PORT, async () => {
   ║  Server:    http://localhost:${PORT}         ║
   ║  Venice:    ${VENICE_API_KEY ? '✅ Connected' : '❌ Missing key'}              ║
   ║  ElevenLabs: ${ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Missing key'}             ║
+  ║                                          ║
+  ║  Chat:   ${CHAT_MODEL}  ║
+  ║  Image:  ${IMAGE_MODEL}                    ║
+  ║  Voice:  Harry - Fierce Warrior          ║
   ╚══════════════════════════════════════════╝
   `);
-
-  // Auto-create or find agent on startup
-  await createAgent();
 });
