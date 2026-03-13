@@ -175,6 +175,11 @@
   <!-- Toast Notifications -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="app.js"></script>
+  <!-- ElevenLabs Conversational AI SDK -->
+  <script type="module">
+    import { Conversation } from 'https://cdn.jsdelivr.net/npm/@11labs/client@latest/+esm';
+    window.ElevenLabsConversation = Conversation;
+  </script>
+  <script src="app.js" defer></script>
 </body>
 </html>

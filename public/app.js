@@ -1,6 +1,9 @@
 /**
  * Wolf Voice Chat — Frontend Application
- * ElevenLabs Conversational AI + Venice.ai Multimodal
+ * ElevenLabs Conversational AI SDK + Venice.ai Multimodal
+ * 
+ * Uses the official @11labs/client SDK for voice (handles all audio complexity)
+ * Custom UI for image generation, text chat, and vision via Venice.ai
  */
 
 // ============================================================
@@ -10,11 +13,8 @@ const state = {
   agentId: null,
   conversation: null,
   isConnected: false,
-  isSpeaking: false,
-  isAgentSpeaking: false,
   chatHistory: [],
-  imageBase64: null,
-  audioEndTimer: null
+  imageBase64: null
 };
 
 // ============================================================
@@ -162,7 +162,7 @@ function setupEventListeners() {
 }
 
 // ============================================================
-// VOICE CONVERSATION (ElevenLabs)
+// VOICE CONVERSATION — Using @11labs/client SDK
 // ============================================================
 async function toggleConversation() {
   if (state.isConnected) {
@@ -182,6 +182,9 @@ async function startConversation() {
   els.micLabel.textContent = 'Connecting...';
 
   try {
+    // Request mic permission first (must be from user gesture)
+    await navigator.mediaDevices.getUserMedia({ audio: true });
+
     // Get signed URL for secure connection
     const signedUrlRes = await fetch('/api/signed-url');
     const signedUrlData = await signedUrlRes.json();
@@ -190,42 +193,55 @@ async function startConversation() {
       throw new Error(signedUrlData.error);
     }
 
-    const signedUrl = signedUrlData.signed_url;
+    // Use the ElevenLabs SDK's Conversation.startSession
+    // This handles ALL audio capture, encoding, decoding, and playback
+    const conversation = await window.ElevenLabsConversation.startSession({
+      signedUrl: signedUrlData.signed_url,
+      onConnect: () => {
+        console.log('🐺 Connected to ElevenLabs via SDK');
+        state.isConnected = true;
+        setStatus('connected', 'Connected — speak!');
+        els.micButton.classList.add('active');
+        els.micIcon.classList.add('hidden');
+        els.stopIcon.classList.remove('hidden');
+        els.micLabel.textContent = 'Click to stop';
+        els.voiceVis.classList.add('active');
+        els.transcriptPlaceholder?.remove();
+        showToast('🎤 Microphone active — start talking!', 'success');
+      },
+      onDisconnect: () => {
+        console.log('🐺 Disconnected from ElevenLabs');
+        resetConversation();
+      },
+      onError: (error) => {
+        console.error('ElevenLabs SDK error:', error);
+        showToast(`Voice error: ${error.message || error}`, 'error');
+        resetConversation();
+      },
+      onModeChange: (mode) => {
+        console.log('Mode changed:', mode.mode);
+        if (mode.mode === 'speaking') {
+          els.voiceVis.classList.add('speaking');
+          setStatus('speaking', 'Wolf is speaking...');
+        } else {
+          els.voiceVis.classList.remove('speaking');
+          if (state.isConnected) {
+            setStatus('connected', 'Listening...');
+          }
+        }
+      },
+      onMessage: (message) => {
+        console.log('SDK message:', message);
+        // Handle transcript messages
+        if (message.type === 'agent_response' && message.agent_response_event?.agent_response) {
+          addTranscript('wolf', message.agent_response_event.agent_response);
+        } else if (message.type === 'user_transcript' && message.user_transcription_event?.user_transcript) {
+          addTranscript('user', message.user_transcription_event.user_transcript);
+        }
+      }
+    });
 
-    // Connect via WebSocket using the ElevenLabs protocol
-    const ws = new WebSocket(signedUrl);
-
-    ws.onopen = () => {
-      console.log('🐺 WebSocket connected to ElevenLabs');
-      state.isConnected = true;
-      state.conversation = ws;
-
-      setStatus('connected', 'Connected — speak!');
-      els.micButton.classList.add('active');
-      els.micIcon.classList.add('hidden');
-      els.stopIcon.classList.remove('hidden');
-      els.micLabel.textContent = 'Click to stop';
-      els.voiceVis.classList.add('active');
-      els.transcriptPlaceholder?.remove();
-
-      // Start audio capture
-      startAudioCapture(ws);
-    };
-
-    ws.onmessage = (event) => {
-      handleWSMessage(event.data);
-    };
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      showToast('Voice connection error', 'error');
-      resetConversation();
-    };
-
-    ws.onclose = (event) => {
-      console.log('WebSocket closed:', event.code, event.reason);
-      resetConversation();
-    };
+    state.conversation = conversation;
 
   } catch (err) {
     console.error('Start conversation error:', err);
@@ -236,15 +252,8 @@ async function startConversation() {
 
 async function stopConversation() {
   if (state.conversation) {
-    state.conversation.close();
-  }
-  if (state.audioContext) {
-    state.audioContext.close();
-    state.audioContext = null;
-  }
-  if (state.mediaStream) {
-    state.mediaStream.getTracks().forEach(t => t.stop());
-    state.mediaStream = null;
+    await state.conversation.endSession();
+    state.conversation = null;
   }
   resetConversation();
 }
@@ -252,17 +261,6 @@ async function stopConversation() {
 function resetConversation() {
   state.isConnected = false;
   state.conversation = null;
-  state.isSpeaking = false;
-  state.isAgentSpeaking = false;
-
-  // Clear audio queue
-  audioPlayQueue = [];
-  isPlayingQueue = false;
-  nextPlayTime = 0;
-  if (state.audioEndTimer) {
-    clearTimeout(state.audioEndTimer);
-    state.audioEndTimer = null;
-  }
 
   setStatus('connected', 'Wolf is ready');
   els.micButton.classList.remove('active');
@@ -271,236 +269,6 @@ function resetConversation() {
   els.micLabel.textContent = 'Click to talk';
   els.voiceVis.classList.remove('active', 'speaking');
 }
-
-// Audio capture and streaming
-async function startAudioCapture(ws) {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        sampleRate: 16000,
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true
-      }
-    });
-
-    state.mediaStream = stream;
-    state.audioContext = new AudioContext({ sampleRate: 16000 });
-    const source = state.audioContext.createMediaStreamSource(stream);
-    const processor = state.audioContext.createScriptProcessor(4096, 1, 1);
-
-    source.connect(processor);
-    processor.connect(state.audioContext.destination);
-
-    processor.onaudioprocess = (e) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        const inputData = e.inputBuffer.getChannelData(0);
-        // Convert float32 to int16
-        const int16 = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i]));
-          int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
-        // Send as base64 encoded audio
-        const base64Audio = arrayBufferToBase64(int16.buffer);
-        ws.send(JSON.stringify({
-          user_audio_chunk: base64Audio
-        }));
-      }
-    };
-
-    showToast('🎤 Microphone active — start talking!', 'success');
-  } catch (err) {
-    console.error('Mic access error:', err);
-    showToast('Microphone access denied. Please allow mic access.', 'error');
-    stopConversation();
-  }
-}
-
-// Handle incoming WebSocket messages from ElevenLabs
-let audioQueue = [];
-let isPlayingAudio = false;
-
-function handleWSMessage(data) {
-  try {
-    const msg = JSON.parse(data);
-
-    switch (msg.type) {
-      case 'conversation_initiation_metadata':
-        console.log('Conversation initiated:', msg);
-        break;
-
-      case 'agent_response':
-        if (msg.agent_response_event?.agent_response) {
-          addTranscript('wolf', msg.agent_response_event.agent_response);
-          // NOTE: Do NOT auto-trigger image gen from Wolf's voice responses
-          // Only generate images from explicit user requests in the Images tab
-        }
-        break;
-
-      case 'user_transcript':
-        if (msg.user_transcription_event?.user_transcript) {
-          addTranscript('user', msg.user_transcription_event.user_transcript);
-        }
-        break;
-
-      case 'audio':
-        if (msg.audio_event?.audio_base_64) {
-          state.isAgentSpeaking = true;
-          // Clear any pending "done speaking" timer
-          if (state.audioEndTimer) {
-            clearTimeout(state.audioEndTimer);
-            state.audioEndTimer = null;
-          }
-          playAudioChunk(msg.audio_event.audio_base_64);
-          els.voiceVis.classList.add('speaking');
-          setStatus('speaking', 'Wolf is speaking...');
-        }
-        break;
-
-      case 'agent_response_correction':
-        if (msg.agent_response_correction_event?.corrected_response) {
-          updateLastTranscript('wolf', msg.agent_response_correction_event.corrected_response);
-        }
-        break;
-
-      case 'interruption':
-        audioPlayQueue = [];
-        isPlayingQueue = false;
-        nextPlayTime = 0;
-        state.isAgentSpeaking = false;
-        if (state.audioEndTimer) clearTimeout(state.audioEndTimer);
-        els.voiceVis.classList.remove('speaking');
-        setStatus('connected', 'Listening...');
-        break;
-
-      case 'ping':
-        if (state.conversation && state.conversation.readyState === WebSocket.OPEN) {
-          state.conversation.send(JSON.stringify({
-            type: 'pong',
-            event_id: msg.ping_event?.event_id
-          }));
-        }
-        break;
-
-      default:
-        console.log('WS message:', msg.type, msg);
-    }
-  } catch (err) {
-    // Binary audio data
-    if (data instanceof Blob || data instanceof ArrayBuffer) {
-      // Handle raw audio
-    }
-  }
-}
-
-// ============================================================
-// AUDIO PLAYBACK — μ-law decoding + sequential queue
-// ============================================================
-let playbackContext = null;
-let audioPlayQueue = [];
-let isPlayingQueue = false;
-let nextPlayTime = 0;
-
-// μ-law to linear PCM lookup table (ITU-T G.711)
-const MULAW_DECODE_TABLE = new Int16Array(256);
-(function buildMulawTable() {
-  for (let i = 0; i < 256; i++) {
-    let mu = ~i & 0xFF;
-    let sign = (mu & 0x80) ? -1 : 1;
-    let exponent = (mu >> 4) & 0x07;
-    let mantissa = mu & 0x0F;
-    let sample = (mantissa << (exponent + 3)) + (1 << (exponent + 3)) - 132;
-    if (sample > 32767) sample = 32767;
-    if (sample < -32767) sample = -32767;
-    MULAW_DECODE_TABLE[i] = sign * sample;
-  }
-})();
-
-function decodeMulaw(mulawBytes) {
-  const pcm = new Float32Array(mulawBytes.length);
-  for (let i = 0; i < mulawBytes.length; i++) {
-    pcm[i] = MULAW_DECODE_TABLE[mulawBytes[i]] / 32768.0;
-  }
-  return pcm;
-}
-
-function scheduleListeningState() {
-  if (state.audioEndTimer) clearTimeout(state.audioEndTimer);
-  state.audioEndTimer = setTimeout(() => {
-    if (audioPlayQueue.length === 0 && !isPlayingQueue) {
-      state.isAgentSpeaking = false;
-      els.voiceVis.classList.remove('speaking');
-      if (state.isConnected) {
-        setStatus('connected', 'Listening...');
-      }
-    }
-  }, 1000);
-}
-
-async function playAudioChunk(base64Audio) {
-  // Queue the chunk and process
-  audioPlayQueue.push(base64Audio);
-  if (!isPlayingQueue) {
-    processAudioQueue();
-  }
-}
-
-async function processAudioQueue() {
-  if (audioPlayQueue.length === 0) {
-    isPlayingQueue = false;
-    scheduleListeningState();
-    return;
-  }
-
-  isPlayingQueue = true;
-
-  if (!playbackContext) {
-    playbackContext = new AudioContext({ sampleRate: 8000 });
-  }
-
-  // Ensure context is running (Chrome autoplay policy)
-  if (playbackContext.state === 'suspended') {
-    await playbackContext.resume();
-  }
-
-  const base64Audio = audioPlayQueue.shift();
-  const audioBytes = new Uint8Array(base64ToArrayBuffer(base64Audio));
-
-  try {
-    // Decode μ-law to linear PCM float32
-    const pcmFloat = decodeMulaw(audioBytes);
-
-    // Create audio buffer at 8kHz (μ-law standard rate)
-    const audioBuffer = playbackContext.createBuffer(1, pcmFloat.length, 8000);
-    audioBuffer.getChannelData(0).set(pcmFloat);
-
-    const source = playbackContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(playbackContext.destination);
-
-    // Schedule this chunk right after the previous one ends
-    const currentTime = playbackContext.currentTime;
-    const startTime = Math.max(currentTime, nextPlayTime);
-    source.start(startTime);
-
-    // Calculate when this chunk will finish
-    nextPlayTime = startTime + audioBuffer.duration;
-
-    source.onended = () => {
-      // Process next chunk in queue
-      processAudioQueue();
-    };
-  } catch (err) {
-    console.error('Audio playback error:', err);
-    // Try next chunk even if this one fails
-    processAudioQueue();
-  }
-}
-
-// Image generation is only triggered from the Images tab UI.
-// Auto-detection from voice responses has been disabled to prevent
-// false triggers (e.g., Wolf's greeting containing "generate" keywords).
 
 // ============================================================
 // IMAGE GENERATION (Venice.ai)
@@ -558,7 +326,6 @@ async function generateImage() {
 
       showToast('🎨 Image generated!', 'success');
     } else if (data.images && data.images[0]) {
-      // Alternative response format
       const item = document.createElement('div');
       item.className = 'gallery-item';
       item.innerHTML = `
@@ -586,23 +353,19 @@ async function sendChatMessage() {
   const text = els.chatInput.value.trim();
   if (!text) return;
 
-  // Add user message
   addChatMessage('user', text);
   els.chatInput.value = '';
 
-  // Add to history
   state.chatHistory.push({ role: 'user', content: text });
 
-  // System prompt for text chat
   const messages = [
     {
       role: 'system',
       content: `You are Wolf — bold, edgy, provocative, unfiltered, and magnetically authentic. You speak with raw honesty and a hint of arrogance. Be concise but impactful. Use casual language and be genuinely engaging. If someone asks you to generate an image, tell them to use the Image tab or ask you in voice chat.`
     },
-    ...state.chatHistory.slice(-20) // Keep last 20 messages
+    ...state.chatHistory.slice(-20)
   ];
 
-  // Show typing indicator
   const typingEl = document.createElement('div');
   typingEl.className = 'chat-msg wolf';
   typingEl.innerHTML = `
@@ -622,8 +385,6 @@ async function sendChatMessage() {
     });
 
     const data = await response.json();
-
-    // Remove typing indicator
     typingEl.remove();
 
     if (data.choices && data.choices[0]) {
@@ -746,14 +507,6 @@ function addTranscript(role, text) {
   els.transcriptArea.scrollTop = els.transcriptArea.scrollHeight;
 }
 
-function updateLastTranscript(role, text) {
-  const messages = els.transcriptArea.querySelectorAll(`.transcript-message.${role}`);
-  if (messages.length > 0) {
-    const last = messages[messages.length - 1];
-    last.querySelector('.msg-text').textContent = text;
-  }
-}
-
 function showToast(message, type = 'info') {
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
@@ -774,22 +527,4 @@ function escapeHtml(text) {
 
 function capitalize(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
-}
-
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-function base64ToArrayBuffer(base64) {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
 }
