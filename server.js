@@ -67,7 +67,7 @@ Keep responses conversational and punchy — this is a VOICE conversation, not a
           temperature: 0.85,
           max_tokens: 300
         },
-        first_message: "Yo! What's up? It's Wolf. I'm wide awake, slightly feral, and ready for whatever chaos you wanna throw my way. Talk to me — or better yet, let me generate something sick for you. What are we getting into?",
+        first_message: "Yo! What's up? It's Wolf. I'm wide awake, slightly feral, and ready for whatever chaos you wanna throw my way. Talk to me — what are we getting into?",
         language: 'en'
       },
       tts: {

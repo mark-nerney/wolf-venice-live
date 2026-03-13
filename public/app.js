@@ -11,8 +11,10 @@ const state = {
   conversation: null,
   isConnected: false,
   isSpeaking: false,
+  isAgentSpeaking: false,
   chatHistory: [],
-  imageBase64: null
+  imageBase64: null,
+  audioEndTimer: null
 };
 
 // ============================================================
@@ -321,7 +323,8 @@ function handleWSMessage(data) {
       case 'agent_response':
         if (msg.agent_response_event?.agent_response) {
           addTranscript('wolf', msg.agent_response_event.agent_response);
-          checkForImageRequest(msg.agent_response_event.agent_response);
+          // NOTE: Do NOT auto-trigger image gen from Wolf's voice responses
+          // Only generate images from explicit user requests in the Images tab
         }
         break;
 
@@ -333,6 +336,12 @@ function handleWSMessage(data) {
 
       case 'audio':
         if (msg.audio_event?.audio_base_64) {
+          state.isAgentSpeaking = true;
+          // Clear any pending "done speaking" timer
+          if (state.audioEndTimer) {
+            clearTimeout(state.audioEndTimer);
+            state.audioEndTimer = null;
+          }
           playAudioChunk(msg.audio_event.audio_base_64);
           els.voiceVis.classList.add('speaking');
           setStatus('speaking', 'Wolf is speaking...');
@@ -340,21 +349,20 @@ function handleWSMessage(data) {
         break;
 
       case 'agent_response_correction':
-        // Handle corrections to the transcript
         if (msg.agent_response_correction_event?.corrected_response) {
           updateLastTranscript('wolf', msg.agent_response_correction_event.corrected_response);
         }
         break;
 
       case 'interruption':
-        // User interrupted
         audioQueue = [];
+        state.isAgentSpeaking = false;
+        if (state.audioEndTimer) clearTimeout(state.audioEndTimer);
         els.voiceVis.classList.remove('speaking');
         setStatus('connected', 'Listening...');
         break;
 
       case 'ping':
-        // Respond with pong
         if (state.conversation && state.conversation.readyState === WebSocket.OPEN) {
           state.conversation.send(JSON.stringify({
             type: 'pong',
@@ -377,6 +385,18 @@ function handleWSMessage(data) {
 // Audio playback
 let playbackContext = null;
 
+function scheduleListeningState() {
+  // Debounced: only switch to "Listening" once no more audio chunks arrive
+  if (state.audioEndTimer) clearTimeout(state.audioEndTimer);
+  state.audioEndTimer = setTimeout(() => {
+    state.isAgentSpeaking = false;
+    els.voiceVis.classList.remove('speaking');
+    if (state.isConnected) {
+      setStatus('connected', 'Listening...');
+    }
+  }, 800); // Wait 800ms after last audio chunk ends
+}
+
 async function playAudioChunk(base64Audio) {
   try {
     if (!playbackContext) {
@@ -390,10 +410,7 @@ async function playAudioChunk(base64Audio) {
       const source = playbackContext.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(playbackContext.destination);
-      source.onended = () => {
-        els.voiceVis.classList.remove('speaking');
-        setStatus('connected', 'Listening...');
-      };
+      source.onended = scheduleListeningState;
       source.start();
     } catch (decodeErr) {
       // PCM data - play directly
@@ -407,10 +424,7 @@ async function playAudioChunk(base64Audio) {
       const source = playbackContext.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(playbackContext.destination);
-      source.onended = () => {
-        els.voiceVis.classList.remove('speaking');
-        setStatus('connected', 'Listening...');
-      };
+      source.onended = scheduleListeningState;
       source.start();
     }
   } catch (err) {
@@ -418,48 +432,9 @@ async function playAudioChunk(base64Audio) {
   }
 }
 
-// Detect image generation requests in Wolf's responses
-function checkForImageRequest(text) {
-  const lower = text.toLowerCase();
-  const imageKeywords = ['generating', 'creating an image', 'let me generate', 'here\'s an image',
-    'making an image', 'creating that', 'generating that', 'i\'ll create', 'let me create',
-    'creating something', 'generating something', 'picture coming', 'image coming'];
-
-  for (const kw of imageKeywords) {
-    if (lower.includes(kw)) {
-      // Extract a prompt from the context
-      const prompt = extractImagePrompt(text);
-      if (prompt) {
-        generateImageFromVoice(prompt);
-      }
-      break;
-    }
-  }
-}
-
-function extractImagePrompt(text) {
-  // Try to extract the descriptive part
-  const patterns = [
-    /generating[:\s]+(.+)/i,
-    /creating[:\s]+(.+)/i,
-    /image of[:\s]+(.+)/i,
-    /picture of[:\s]+(.+)/i,
-    /let me (?:create|generate|make)[:\s]+(.+)/i
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) return match[1].trim().replace(/[.!]$/, '');
-  }
-
-  return null;
-}
-
-async function generateImageFromVoice(prompt) {
-  switchTab('images');
-  els.imagePrompt.value = prompt;
-  await generateImage();
-}
+// Image generation is only triggered from the Images tab UI.
+// Auto-detection from voice responses has been disabled to prevent
+// false triggers (e.g., Wolf's greeting containing "generate" keywords).
 
 // ============================================================
 // IMAGE GENERATION (Venice.ai)
