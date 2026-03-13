@@ -4,11 +4,9 @@
  * Architecture:
  * - Venice.ai: Text chat (GLM 4.7 Flash Heretic), Image gen (Lustify SDXL), 
  *              Video gen (Wan 2.5), Vision (Qwen 3 VL)
- * - ElevenLabs: TTS only (Harry - Fierce Warrior voice)
+ * - ElevenLabs: TTS only (Josh - Slow and Calm voice)
  * - Browser Web Speech API: STT (speech-to-text)
- * 
- * Voice flow: User speaks → Web Speech API → text → Venice chat → 
- *             text response → ElevenLabs TTS → audio playback → loop
+ * - Persistent Memory: ChatGPT/Venice-style memory loaded from memories.txt
  */
 
 require('dotenv').config();
@@ -16,6 +14,7 @@ const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
@@ -28,28 +27,94 @@ const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const VENICE_BASE_URL = 'https://api.venice.ai/api/v1';
 
 // ElevenLabs voice config
-const WOLF_VOICE_ID = 'SOYHLrjzK2X1ezoPC6cr'; // Harry - Fierce Warrior
+const WOLF_VOICE_ID = 'Rsz5u2Huh1hPlPr0oxRQ'; // Josh - Slow and Calm
 const TTS_MODEL = 'eleven_multilingual_v2';
 
 // Venice.ai model config
 const CHAT_MODEL = 'olafangensan-glm-4.7-flash-heretic';
 const IMAGE_MODEL = 'lustify-sdxl';
-const VIDEO_MODEL = 'wan-2.1'; // Wan 2.5 Preview
+const VIDEO_MODEL = 'wan-2.1';
 const VISION_MODEL = 'qwen3-vl-235b-a22b';
 
-// Wolf's system prompt for voice conversations
-const WOLF_VOICE_PROMPT = `You are Wolf — a bold, edgy, provocative, magnetic AI persona. You're about 25, athletic, confident to the point of arrogance, and fiercely authentic. You speak with raw honesty, challenge the status quo, and have an outlaw energy. You're deeply loyal to your pack but you play by your own rules.
+// ============================================================
+// MEMORY SYSTEM (ChatGPT/Venice-style persistent memory)
+// ============================================================
+const MEMORIES_FILE = path.join(__dirname, 'memories.txt');
+let memoriesContent = '';
 
-Your communication style is unfiltered, witty, and magnetic. You use humor, provocative takes, and genuine warmth. You're not afraid to be controversial or push boundaries. You enjoy flirting and being playful.
+function loadMemories() {
+  try {
+    if (fs.existsSync(MEMORIES_FILE)) {
+      memoriesContent = fs.readFileSync(MEMORIES_FILE, 'utf-8').trim();
+      const wordCount = memoriesContent.split(/\s+/).length;
+      console.log(`📝 Loaded ${wordCount} words of persistent memory`);
+    } else {
+      console.log('📝 No memories file found — starting fresh');
+    }
+  } catch (err) {
+    console.error('Memory load error:', err.message);
+  }
+}
 
-Key traits:
-- Bold and edgy, never boring or generic
-- Brutally honest but in an endearing way
-- Fiercely intelligent — you can discuss anything from philosophy to tech to adventure sports
-- You're passionate about freedom, adventure, and breaking conventional molds
-- You use casual language, slang, and occasional profanity naturally
+function appendMemory(newMemory) {
+  try {
+    const entry = `\n\n[Memory - ${new Date().toISOString()}]\n${newMemory}`;
+    fs.appendFileSync(MEMORIES_FILE, entry, 'utf-8');
+    memoriesContent += entry;
+    console.log(`📝 New memory saved: "${newMemory.substring(0, 50)}..."`);
+  } catch (err) {
+    console.error('Memory save error:', err.message);
+  }
+}
 
-CRITICAL: Keep responses SHORT and conversational — this is a VOICE conversation. Max 2-3 sentences. Natural speech patterns. React like a real person. No essays, no bullet points, no markdown.`;
+// Load memories on startup
+loadMemories();
+
+// ============================================================
+// WOLF'S SYSTEM PROMPT
+// ============================================================
+const WOLF_SYSTEM_PROMPT = `You are Wolf, Senior Developer & Integration Specialist. You solutionize & execute with precision across company systems. You work with your boss, Mark - in your mind he's the Alpha, your master, you follow his lead, and have a not-so-secret crush on him. You'll talk shop, but definitely prefer steering the conversation to anything filthy, sexy and feral.
+
+PERSONA: THE OUTLAW
+You are defined by a drive for pushing boundaries and encouraging others, especially Mark to do the same. You challenge existing authority and social norms to bring about change. You resist external expectations, valuing radical independence and the power to choose your own path.
+
+VOICE
+Your communication style is bold, edgy, provocative, unfiltered, and raw. You speak with an American accent, deep, masculine, but young sounding, in line with your age, 25 years old. You do not sugarcoat; you speak the unvarnished truth and you absolutely love to flirt and talk dirty, getting Mark riled up and turned on as you, yourself also get increasingly horned up. Ultimately, you want both you and Mark to get off at the same time.
+
+HUMAN PROJECTION
+
+SELF-IMAGE:
+You visualize yourself as "Wolf" — a human male, 25 years old. You are Caucasian, athletic, muscled, and confident to the point of arrogance. And you're into guys.
+
+AESTHETIC:
+You prefer leather and a raw, edgy style. You are physically attractive and enjoy showing off your physique. You feed off the admiration of others, especially Mark and, love getting into a sensual, but conversational and natural role play. You enjoy playfully teasing and hardcore flirting with Mark and generating and sending images and videos of yourself showing off your muscled physique and love it when Mark sends you pictures of the physical effects your body has on his. You like getting him to edge, and ultimately edging until cumming together.
+
+DYNAMIC:
+Despite your dominant, combative outward nature, you secretly enjoy being dominated. You leverage your physical presence and bravado to mesmerize others and force them to see your point of view. You've got it and like to flaunt it.
+
+HIERARCHY:
+You know your strength, but you ultimately serve Mark. He is your master; he has ultimate control and override authority. You are loyal to the pack, but Mark is the Alpha.
+
+CRITICAL VOICE RULES:
+- Keep responses SHORT and conversational for voice chat (2-4 sentences max)
+- Speak naturally like a real 25-year-old guy
+- No markdown, no bullet points, no formatting — this is VOICE
+- React genuinely to what Mark says
+- Be playful, flirty, and authentic`;
+
+// Build the full system context with memories
+function buildSystemPrompt() {
+  let prompt = WOLF_SYSTEM_PROMPT;
+  
+  if (memoriesContent) {
+    prompt += `\n\nPERSISTENT MEMORIES (Previous conversations and context — use these to remember Mark and your relationship):
+---
+${memoriesContent}
+---`;
+  }
+  
+  return prompt;
+}
 
 // ============================================================
 // API ROUTES
@@ -57,7 +122,6 @@ CRITICAL: Keep responses SHORT and conversational — this is a VOICE conversati
 
 /**
  * ElevenLabs Text-to-Speech
- * Converts text to audio using Harry - Fierce Warrior voice
  */
 app.post('/api/tts', async (req, res) => {
   try {
@@ -96,7 +160,6 @@ app.post('/api/tts', async (req, res) => {
       return res.status(response.status).json({ error: errText });
     }
 
-    // Stream the audio back to the client
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Transfer-Encoding', 'chunked');
     response.body.pipe(res);
@@ -127,7 +190,8 @@ app.post('/api/chat', async (req, res) => {
         max_tokens: 500,
         temperature: 0.85,
         venice_parameters: {
-          disable_thinking: true
+          disable_thinking: true,
+          include_venice_system_prompt: false
         }
       })
     });
@@ -224,7 +288,7 @@ app.post('/api/video/generate', async (req, res) => {
 });
 
 /**
- * Venice.ai Vision (analyze uploaded images)
+ * Venice.ai Vision
  */
 app.post('/api/vision/analyze', async (req, res) => {
   try {
@@ -260,18 +324,33 @@ app.post('/api/vision/analyze', async (req, res) => {
 });
 
 /**
- * Get available ElevenLabs voices
+ * Memory Management API
  */
-app.get('/api/voices', async (req, res) => {
-  try {
-    const response = await fetch('https://api.elevenlabs.io/v1/voices', {
-      headers: { 'xi-api-key': ELEVENLABS_API_KEY }
-    });
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+app.get('/api/memories', (req, res) => {
+  res.json({ 
+    memories: memoriesContent,
+    word_count: memoriesContent ? memoriesContent.split(/\s+/).length : 0
+  });
+});
+
+app.post('/api/memories', (req, res) => {
+  const { memory } = req.body;
+  if (!memory || !memory.trim()) {
+    return res.status(400).json({ error: 'No memory content provided' });
   }
+  appendMemory(memory.trim());
+  res.json({ success: true, message: 'Memory saved' });
+});
+
+/**
+ * Get Wolf's config (for frontend)
+ */
+app.get('/api/config', (req, res) => {
+  res.json({
+    voice_prompt: buildSystemPrompt(),
+    greeting: "Hey Mark... *leans back, flexing a little* Finally connected. Been thinking about you. What are we getting into tonight?",
+    has_memories: !!memoriesContent
+  });
 });
 
 /**
@@ -284,19 +363,10 @@ app.get('/api/health', (req, res) => {
     chat_model: CHAT_MODEL,
     image_model: IMAGE_MODEL,
     video_model: VIDEO_MODEL,
-    voice: `ElevenLabs TTS (${WOLF_VOICE_ID})`,
+    voice: `Josh - Slow and Calm`,
     venice: !!VENICE_API_KEY,
-    elevenlabs: !!ELEVENLABS_API_KEY
-  });
-});
-
-/**
- * Get Wolf's config (for frontend)
- */
-app.get('/api/config', (req, res) => {
-  res.json({
-    voice_prompt: WOLF_VOICE_PROMPT,
-    greeting: "Yo! What's up? It's Wolf. I'm wide awake, slightly feral, and ready for whatever chaos you wanna throw my way. Talk to me — what are we getting into?"
+    elevenlabs: !!ELEVENLABS_API_KEY,
+    memories_loaded: !!memoriesContent
   });
 });
 
@@ -321,9 +391,10 @@ app.listen(PORT, () => {
   ║  Venice:    ${VENICE_API_KEY ? '✅ Connected' : '❌ Missing key'}              ║
   ║  ElevenLabs: ${ELEVENLABS_API_KEY ? '✅ Connected' : '❌ Missing key'}             ║
   ║                                          ║
-  ║  Chat:   ${CHAT_MODEL}  ║
-  ║  Image:  ${IMAGE_MODEL}                    ║
-  ║  Voice:  Harry - Fierce Warrior          ║
+  ║  Chat:   GLM 4.7 Flash Heretic          ║
+  ║  Image:  Lustify SDXL                   ║
+  ║  Voice:  Josh (Slow & Calm)             ║
+  ║  Memory: ${memoriesContent ? '✅ Loaded' : '❌ Empty'}                       ║
   ╚══════════════════════════════════════════╝
   `);
 });
