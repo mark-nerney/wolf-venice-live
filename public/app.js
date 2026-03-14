@@ -18,6 +18,7 @@ const state = {
   isListening: false,
   isSpeaking: false,
   isProcessing: false,  // Lock to prevent mic during think+speak cycle
+  agModeActive: false,  // When true, Venice shuts up, AG Wolf takes over
   voiceChatHistory: [],
   chatHistory: [],
   imageBase64: null,
@@ -111,13 +112,24 @@ async function initWolf() {
     const response = await fetch('/api/config');
     state.wolfConfig = await response.json();
 
+    // Check AG mode status (persists across page loads)
+    try {
+      const agRes = await fetch('/api/ag-mode');
+      const agData = await agRes.json();
+      state.agModeActive = agData.ag_mode;
+      if (state.agModeActive) {
+        console.log('🟣 AG Mode is ACTIVE — Venice silenced');
+        showToast('🟣 Antigravity Wolf is in control', 'success');
+      }
+    } catch (e) { /* ignore */ }
+
     // Check health
     const health = await fetch('/api/health');
     const healthData = await health.json();
 
     if (healthData.venice && healthData.elevenlabs) {
-      setStatus('connected', 'Wolf is ready');
-      showToast('🐺 Wolf is online — voice + text + images!', 'success');
+      setStatus('connected', state.agModeActive ? 'AG Wolf is ready' : 'Wolf is ready');
+      if (!state.agModeActive) showToast('🐺 Wolf is online — voice + text + images!', 'success');
     } else {
       setStatus('error', 'Missing API keys');
       showToast('API keys not configured', 'error');
@@ -313,10 +325,32 @@ async function handleUserSpeech(transcript) {
   // LOCK: Stop listening and prevent auto-restart
   state.isProcessing = true;
   stopListening();
-  setStatus('loading', 'Wolf is thinking...');
 
   // Add to voice chat history
   state.voiceChatHistory.push({ role: 'user', content: transcript });
+
+  // ALWAYS send to reverse bridge so Antigravity Wolf can hear
+  fetch('/api/user-speech', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: transcript, timestamp: new Date().toISOString() })
+  }).catch(err => console.error('Reverse bridge error:', err));
+
+  // If AG mode is active, DON'T send to Venice — wait for AG to respond via bridge
+  if (state.agModeActive) {
+    setStatus('loading', 'Antigravity Wolf is listening...');
+    // AG will respond via /api/ag-message → SSE → speakText
+    // Just wait, then resume listening after a timeout
+    setTimeout(() => {
+      state.isProcessing = false;
+      if (state.isVoiceActive && !state.isSpeaking) {
+        startListening();
+      }
+    }, 30000); // 30s timeout waiting for AG response
+    return;
+  }
+
+  setStatus('loading', 'Wolf is thinking...');
 
   // Build messages with system prompt
   const messages = [
@@ -669,6 +703,14 @@ function setupEventListeners() {
   agEventSource.onmessage = async (event) => {
     try {
       const data = JSON.parse(event.data);
+      // Handle AG mode toggle
+      if (data.type === 'ag-mode') {
+        state.agModeActive = data.active;
+        console.log('🟣 AG Mode:', data.active ? 'ACTIVE' : 'INACTIVE');
+        showToast(data.active ? '🟣 Antigravity Wolf taking over — Venice silenced' : '🐺 Venice Wolf back online', 'success');
+        return;
+      }
+
       if (data.type === 'ag-message' && data.text) {
         console.log('🟣 Remote AG message received:', data.text);
 
