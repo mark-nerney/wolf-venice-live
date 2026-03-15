@@ -167,13 +167,27 @@ app.get('/api/ag-events', (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive'
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
   });
   res.write('data: {"type":"connected"}\n\n');
+  
+  // Keepalive ping every 15 seconds to prevent Cloud Run from killing the connection
+  const keepalive = setInterval(() => {
+    try {
+      res.write(': keepalive\n\n');
+    } catch (e) {
+      clearInterval(keepalive);
+    }
+  }, 15000);
+  
   sseClients.push(res);
   req.on('close', () => {
+    clearInterval(keepalive);
     sseClients = sseClients.filter(c => c !== res);
+    console.log(`📡 SSE client disconnected. Active clients: ${sseClients.length}`);
   });
+  console.log(`📡 SSE client connected. Active clients: ${sseClients.length}`);
 });
 
 app.post('/api/ag-message', (req, res) => {
@@ -599,4 +613,4 @@ app.get('/api/health', async (req, res) => {
 
 // Export as Firebase Cloud Function (v2 API for firebase-functions v6+)
 const { onRequest } = require('firebase-functions/v2/https');
-exports.api = onRequest({ timeoutSeconds: 300, memory: '512MiB', cors: true }, app);
+exports.api = onRequest({ timeoutSeconds: 3600, memory: '512MiB', cors: true, minInstances: 1 }, app);

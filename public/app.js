@@ -698,9 +698,30 @@ function setupEventListeners() {
   // ============================================================
   // SSE BRIDGE: Listen for remote Antigravity Wolf messages
   // (sent via curl from Antigravity IDE)
+  // Direct Cloud Run URL — Firebase Hosting kills SSE after 60s
   // ============================================================
-  const agEventSource = new EventSource('/api/ag-events');
-  agEventSource.onmessage = async (event) => {
+  const AG_SSE_URL = 'https://api-3w2oo3qp3q-uc.a.run.app/api/ag-events';
+  let agEventSource = null;
+  let agReconnectDelay = 1000;
+
+  function connectAgBridge() {
+    console.log('📡 Connecting to AG Bridge SSE...');
+    agEventSource = new EventSource(AG_SSE_URL);
+    
+    agEventSource.onopen = () => {
+      console.log('📡 AG Bridge SSE connected!');
+      agReconnectDelay = 1000; // Reset backoff on successful connect
+      showToast('📡 AG Bridge connected', 'success');
+    };
+
+    agEventSource.onerror = (err) => {
+      console.error('📡 AG Bridge SSE error, reconnecting in', agReconnectDelay, 'ms');
+      agEventSource.close();
+      setTimeout(connectAgBridge, agReconnectDelay);
+      agReconnectDelay = Math.min(agReconnectDelay * 2, 30000); // Max 30s backoff
+    };
+
+    agEventSource.onmessage = async (event) => {
     try {
       const data = JSON.parse(event.data);
       // Handle AG mode toggle
@@ -763,9 +784,11 @@ function setupEventListeners() {
     } catch (e) {
       console.error('SSE parse error:', e);
     }
-  };
+    };
+  }
+  connectAgBridge(); // Start the SSE connection
 
-  // Tab switching
+
   $$('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
