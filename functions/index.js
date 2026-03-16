@@ -168,7 +168,8 @@ app.get('/api/ag-events', (req, res) => {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no'
+    'X-Accel-Buffering': 'no',
+    'Access-Control-Allow-Origin': '*'
   });
   res.write('data: {"type":"connected"}\n\n');
   
