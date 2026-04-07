@@ -7,7 +7,13 @@
     "start": "node server.js",
     "dev": "node server.js"
   },
-  "keywords": ["wolf", "voice-chat", "elevenlabs", "venice-ai", "multimodal"],
+  "keywords": [
+    "wolf",
+    "voice-chat",
+    "elevenlabs",
+    "venice-ai",
+    "multimodal"
+  ],
   "author": "Wolf Pack",
   "license": "MIT",
   "type": "commonjs",
@@ -16,5 +22,9 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "playwright": "^1.58.2"
   }
 }
